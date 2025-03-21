@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Korbi Jump</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Boogaloo&family=Bubblegum+Sans&family=Fredoka:wght@400;700&display=swap" rel="stylesheet">
+    <script type="importmap">
+        {
+          "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/"
+          }
+        }
+    </script>
+</head>
+<body>
+    <div id="loading-screen">
+        <div class="loading-content">
+            <h1>Korbi Jump</h1>
+            <div class="spinner"></div>
+            <p>Cargando...</p>
+        </div>
+    </div>
+
+    <div id="menu-screen">
+        <div class="stars-background"></div>
+        <div class="floating-bubbles"></div>
+        <div class="menu-container">
+            <div class="game-title">
+                <h1>Korbi Jump</h1>
+            </div>
+            <div class="menu-content">
+                <div class="menu-buttons">
+                    <button id="create-room-btn" class="menu-btn">Crear Sala</button>
+                    <button id="join-room-btn" class="menu-btn">Unirse a Sala</button>
+                </div>
+                <div class="character-display">
+                    <div class="character">
+                        <div class="kirby">
+                            <div class="kirby-cheeks left"></div>
+                            <div class="kirby-cheeks right"></div>
+                            <div class="kirby-mouth"></div>
+                            <div class="kirby-feet left"></div>
+                            <div class="kirby-feet right"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="create-room-screen" class="hidden">
+        <div class="stars-background"></div>
+        <div class="floating-bubbles"></div>
+        <div class="form-container">
+            <h2>Crear Sala</h2>
+            <div class="input-group">
+                <label for="room-name">Nombre de la Sala:</label>
+                <input type="text" id="room-name" placeholder="Mi Sala">
+            </div>
+            <div class="input-group">
+                <label for="player-name-create">Tu Nombre:</label>
+                <input type="text" id="player-name-create" placeholder="Jugador">
+            </div>
+            <div class="input-group">
+                <label for="max-players">Máximo de Jugadores:</label>
+                <input type="number" id="max-players" min="2" max="8" value="4">
+            </div>
+            <div class="form-buttons">
+                <button id="create-room-submit">Crear</button>
+                <button id="create-room-back">Volver</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="join-room-screen" class="hidden">
+        <div class="stars-background"></div>
+        <div class="floating-bubbles"></div>
+        <div class="form-container">
+            <h2>Unirse a Sala</h2>
+            <div class="input-group">
+                <label for="player-name-join">Tu Nombre:</label>
+                <input type="text" id="player-name-join" placeholder="Jugador">
+            </div>
+            <div class="room-list-container">
+                <h3>Salas Disponibles</h3>
+                <div id="room-list"></div>
+            </div>
+            <div class="form-buttons">
+                <button id="refresh-rooms">Actualizar</button>
+                <button id="join-room-back">Volver</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="lobby-screen" class="hidden">
+        <div class="stars-background"></div>
+        <div class="floating-bubbles"></div>
+        <div class="lobby-info">
+            <h2 id="lobby-name">Nombre de la Sala</h2>
+            <div class="player-list-container">
+                <h3>Jugadores (<span id="player-count">0</span>/<span id="max-player-count">4</span>)</h3>
+                <ul id="player-list"></ul>
+            </div>
+            <div class="lobby-buttons">
+                <button id="start-game" class="primary-btn">Iniciar Juego</button>
+                <button id="leave-lobby">Salir</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="game-container" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10;">
+        <div id="score-container">
+            <p>Puntuación: <span id="score">0</span></p>
+            <p>Vidas: <span id="lives">3</span></p>
+            <p>Velocidad de la lava: <span id="lava-speed">2</span>%</p>
+        </div>
+        <div id="game"></div>
+    </div>
+
+    <!-- Pantalla de Game Over -->
+    <div id="game-over-screen" class="game-over-screen" style="display: none; z-index: 20;">
+        <div class="game-over-content">
+            <h2>¡JUEGO TERMINADO!</h2>
+            <div class="winner">
+                ¡El ganador es:
+                <span class="winner-name" id="winner-name">Jugador</span>
+            </div>
+            <div class="countdown" id="lobby-countdown">
+                Volviendo al lobby en <span id="countdown-timer">10</span> segundos...
+            </div>
+        </div>
+    </div>
+
+    <div id="game-ui" class="game-ui" style="display: none; position: absolute; top: 0; left: 0; width: 100%; z-index: 15;">
+        <div class="score-container">
+            <h2>Kirbo Jump</h2>
+            <p>Altura: <span id="player-height">0</span>m</p>
+            <p>Lava: <span id="lava-height">-10</span>m</p>
+            <p>Velocidad de la lava: <span id="lava-speed">2</span>%</p>
+            <p>Jugadores: <span id="players-remaining">0</span></p>
+            <p>Tiempo: <span id="game-time">0:00</span></p>
+            <div class="lives-container">
+                <span class="lives-label">Vidas:</span>
+                <span id="lives-remaining">3</span>
+                <div class="lives-icons">
+                    <span class="life-heart">❤️</span>
+                    <span class="life-heart">❤️</span>
+                    <span class="life-heart">❤️</span>
+                </div>
+            </div>
+        </div>
+        <div class="controls-info">
+            <p>WASD: Mover | ESPACIO: Saltar | Rueda del ratón: Zoom | Click + Mover: Rotar cámara</p>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="js/menu.js"></script>
+    <script type="module" src="js/game.js"></script>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html> 
