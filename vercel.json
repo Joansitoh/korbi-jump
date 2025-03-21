@@ -16,15 +16,8 @@
             "dest": "/server.js"
         },
         {
-            "src": "/public/(.*)",
+            "src": "/(.*)",
             "dest": "/public/$1"
-        },
-        {
-            "src": "/((?!api/.*).*)",
-            "dest": "/public/index.html"
         }
-    ],
-    "env": {
-        "NODE_ENV": "production"
-    }
+    ]
 } 
