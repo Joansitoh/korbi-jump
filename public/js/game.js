@@ -116,6 +116,40 @@ class Game {
                 this.applyServerPush(velocity);
             }
         });
+        
+        // Configurar evento para recibir nuevas plataformas del servidor
+        this.socket.on('syncNewPlatforms', (platformsData) => {
+            console.log('Recibiendo plataformas sincronizadas:', platformsData);
+            
+            // Limpiar plataformas existentes que estén por encima de la altura mínima
+            const minHeight = Math.min(...platformsData.map(p => p.position.y));
+            this.platformMeshes = this.platformMeshes.filter(platform => {
+                if (platform.position.y >= minHeight) {
+                    this.scene.remove(platform);
+                    return false;
+                }
+                return true;
+            });
+            
+            // Crear las nuevas plataformas
+            platformsData.forEach(platformData => {
+                this.createSinglePlatform(platformData);
+            });
+        });
+        
+        // Añadir estado de ganador
+        this.hasWon = false;
+        
+        // Configurar evento para cuando gana el juego
+        this.socket.on('gameWon', (winnerId) => {
+            if (winnerId === this.playerId) {
+                this.hasWon = true;
+                // Detener cualquier velocidad actual
+                if (this.playerVelocity[this.playerId]) {
+                    this.playerVelocity[this.playerId] = { x: 0, y: 0, z: 0 };
+                }
+            }
+        });
     }
     
     // Iniciar el juego
@@ -323,8 +357,15 @@ class Game {
         this.canUseAirBlast = true;
         this.airBlastCooldown = 0;
         
+        // Restablecer velocidad de la lava
+        this.lavaSpeed = 0.02;
+        this.lavaHeight = -10;
+        
         // Limpiar nametags
         this.nameTags = {};
+        
+        // Restablecer estado de ganador
+        this.hasWon = false;
     }
     
     // Mostrar la sala de espera
@@ -343,7 +384,10 @@ class Game {
         // Mostrar la sala de espera
         const lobbyScreen = document.getElementById('lobby-screen');
         if (lobbyScreen) {
-            lobbyScreen.style.display = 'block';
+            lobbyScreen.style.display = 'flex';
+            lobbyScreen.style.flexDirection = 'column';
+            lobbyScreen.style.alignItems = 'center';
+            lobbyScreen.style.justifyContent = 'center';
             lobbyScreen.style.opacity = '1';
             lobbyScreen.style.visibility = 'visible';
             lobbyScreen.style.zIndex = '1000';
@@ -353,6 +397,8 @@ class Game {
             lobbyScreen.style.width = '100%';
             lobbyScreen.style.height = '100%';
             lobbyScreen.style.backgroundColor = '#ffffff';
+            lobbyScreen.style.margin = '0';
+            lobbyScreen.style.padding = '0';
         }
         
         // Limpiar cualquier overlay o mensaje residual
@@ -903,6 +949,11 @@ class Game {
                 position.z
             );
             
+            // Actualizar la rotación si está presente
+            if (position.rotation !== undefined) {
+                this.playerMeshes[playerId].rotation.y = position.rotation;
+            }
+            
             // Actualizar también la posición del nametag
             this.updateNametagPosition(playerId);
         }
@@ -1173,6 +1224,8 @@ class Game {
     
     // Comprobar qué plataformas están sumergidas en la lava y destruirlas
     checkPlatformsInLava() {
+        let platformsDestroyed = 0;
+        
         // Iteramos de atrás hacia adelante para poder eliminar elementos sin afectar al índice
         for (let i = this.platformMeshes.length - 1; i >= 0; i--) {
             const platform = this.platformMeshes[i];
@@ -1182,14 +1235,295 @@ class Game {
             const platformTopY = platformData.position.y + (platformData.size ? platformData.size.y / 2 : platformData.height / 2);
             
             if (platformTopY <= this.lavaHeight) {
-                // Añadir efecto de destrucción (partículas, sonido, etc.)
+                // Añadir efecto de destrucción
                 this.createDestructionEffect(platform.position);
                 
                 // Eliminar la plataforma de la escena
                 this.scene.remove(platform);
                 this.platformMeshes.splice(i, 1);
+                platformsDestroyed++;
             }
         }
+        
+        // Si se destruyeron plataformas, generar nuevas arriba
+        if (platformsDestroyed > 0) {
+            this.generateNewPlatforms(platformsDestroyed);
+        }
+    }
+    
+    // Generar nuevas plataformas en la parte superior
+    generateNewPlatforms(count) {
+        // Encontrar la plataforma más alta actual
+        let maxHeight = this.lavaHeight;
+        for (const platform of this.platformMeshes) {
+            const platformTopY = platform.position.y + (platform.userData.height || 1) / 2;
+            maxHeight = Math.max(maxHeight, platformTopY);
+        }
+        
+        // Altura mínima para las nuevas plataformas (más cercana para ser alcanzable)
+        const minNewHeight = maxHeight + 2;
+        
+        // Generar datos de las nuevas plataformas
+        const newPlatforms = [];
+        const platformsToGenerate = count * 2;
+        
+        // Usar una semilla basada en la altura máxima para sincronización
+        let seed = Math.floor(maxHeight * 100);
+        const random = () => {
+            seed = (seed * 9301 + 49297) % 233280;
+            return seed / 233280;
+        };
+        
+        for (let i = 0; i < platformsToGenerate; i++) {
+            // Ajustar la distribución de altura para que sea más gradual
+            const heightOffset = i === 0 ? 0 : random() * 3 + (i * 1.5);
+            const height = minNewHeight + heightOffset;
+            
+            const radius = 15; // Reducido de 20 a 15 para que estén más cerca
+            const angle = (i / platformsToGenerate) * Math.PI * 2 + random() * 0.5;
+            const x = Math.cos(angle) * (random() * radius);
+            const z = Math.sin(angle) * (random() * radius);
+            
+            const platformTypes = ['box', 'circle', 'triangle', 'hexagon', 'star'];
+            const type = platformTypes[Math.floor(random() * platformTypes.length)];
+            
+            const baseSize = 2 + random(); // Plataformas ligeramente más grandes
+            
+            const platformData = {
+                position: { x, y: height, z },
+                type: type,
+                size: baseSize,
+                height: 0.5,
+                seed: seed + i
+            };
+            
+            newPlatforms.push(platformData);
+        }
+        
+        // Enviar los datos de las nuevas plataformas al servidor para sincronización
+        this.socket.emit('newPlatformsGenerated', newPlatforms);
+        
+        // Crear las plataformas localmente
+        newPlatforms.forEach(platformData => {
+            this.createSinglePlatform(platformData);
+        });
+    }
+    
+    // Crear una única plataforma
+    createSinglePlatform(platformData) {
+        try {
+            let mesh;
+            const platformMaterial = new THREE.MeshLambertMaterial({ 
+                color: this.getRandomPlatformColor(),
+                transparent: true,
+                opacity: 0 // Empezar invisible para la animación
+            });
+            
+            switch(platformData.type) {
+                case 'box':
+                    const geometry = new THREE.BoxGeometry(
+                        platformData.size,
+                        platformData.height,
+                        platformData.size
+                    );
+                    mesh = new THREE.Mesh(geometry, platformMaterial);
+                    break;
+                    
+                case 'circle':
+                    const cylinderGeometry = new THREE.CylinderGeometry(
+                        platformData.size / 2,
+                        platformData.size / 2,
+                        platformData.height,
+                        32
+                    );
+                    mesh = new THREE.Mesh(cylinderGeometry, platformMaterial);
+                    // Rotar el cilindro para que quede horizontal
+                    mesh.rotation.x = Math.PI / 2;
+                    break;
+                    
+                case 'triangle':
+                    mesh = this.createTriangularPlatform(platformData.size, platformData.height, platformMaterial);
+                    break;
+                    
+                case 'hexagon':
+                    mesh = this.createHexagonalPlatform(platformData.size, platformData.height, platformMaterial);
+                    break;
+                    
+                case 'star':
+                    mesh = this.createStarPlatform(platformData.size, platformData.height, platformMaterial);
+                    break;
+            }
+            
+            if (mesh) {
+                mesh.position.set(
+                    platformData.position.x,
+                    platformData.position.y,
+                    platformData.position.z
+                );
+                
+                // Configurar sombras
+                mesh.receiveShadow = true;
+                mesh.castShadow = true;
+                
+                // Guardar datos de la plataforma
+                mesh.userData.platform = platformData;
+                mesh.userData.width = this.getPlatformWidth(platformData);
+                mesh.userData.height = platformData.height;
+                mesh.userData.depth = this.getPlatformWidth(platformData); // Usar el mismo ancho para profundidad
+                
+                // Añadir a la escena
+                this.scene.add(mesh);
+                this.platformMeshes.push(mesh);
+                
+                // Animar la aparición de la plataforma
+                this.animatePlatformAppearance(mesh);
+            }
+        } catch (error) {
+            console.error('Error al crear plataforma:', error);
+        }
+    }
+    
+    // Crear plataforma triangular
+    createTriangularPlatform(size, height, material) {
+        const shape = new THREE.Shape();
+        const s = size / 2;
+        
+        shape.moveTo(-s, -s);
+        shape.lineTo(s, -s);
+        shape.lineTo(0, s);
+        shape.lineTo(-s, -s);
+        
+        const extrudeSettings = {
+            depth: height,
+            bevelEnabled: false
+        };
+        
+        const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        const mesh = new THREE.Mesh(geometry, material);
+        
+        // Rotar para que quede horizontal
+        mesh.rotation.x = -Math.PI / 2;
+        return mesh;
+    }
+    
+    // Crear plataforma hexagonal
+    createHexagonalPlatform(size, height, material) {
+        const shape = new THREE.Shape();
+        const s = size / 2;
+        
+        for (let i = 0; i < 6; i++) {
+            const angle = (i / 6) * Math.PI * 2;
+            const x = s * Math.cos(angle);
+            const y = s * Math.sin(angle);
+            if (i === 0) shape.moveTo(x, y);
+            else shape.lineTo(x, y);
+        }
+        shape.closePath();
+        
+        const extrudeSettings = {
+            depth: height,
+            bevelEnabled: false
+        };
+        
+        const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        const mesh = new THREE.Mesh(geometry, material);
+        
+        // Rotar para que quede horizontal
+        mesh.rotation.x = -Math.PI / 2;
+        return mesh;
+    }
+    
+    // Crear plataforma en forma de estrella
+    createStarPlatform(size, height, material) {
+        const shape = new THREE.Shape();
+        const outerRadius = size / 2;
+        const innerRadius = size / 4;
+        const points = 5;
+        
+        for (let i = 0; i < points * 2; i++) {
+            const radius = i % 2 === 0 ? outerRadius : innerRadius;
+            const angle = (i * Math.PI) / points;
+            const x = radius * Math.cos(angle);
+            const y = radius * Math.sin(angle);
+            if (i === 0) shape.moveTo(x, y);
+            else shape.lineTo(x, y);
+        }
+        shape.closePath();
+        
+        const extrudeSettings = {
+            depth: height,
+            bevelEnabled: false
+        };
+        
+        const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        const mesh = new THREE.Mesh(geometry, material);
+        
+        // Rotar para que quede horizontal
+        mesh.rotation.x = -Math.PI / 2;
+        return mesh;
+    }
+    
+    // Obtener ancho de la plataforma según su tipo
+    getPlatformWidth(platformData) {
+        switch(platformData.type) {
+            case 'box':
+                return platformData.size.x;
+            case 'circle':
+                return platformData.radius * 2;
+            case 'triangle':
+            case 'hexagon':
+            case 'star':
+                return platformData.size;
+            default:
+                return 1;
+        }
+    }
+    
+    // Obtener profundidad de la plataforma según su tipo
+    getPlatformDepth(platformData) {
+        switch(platformData.type) {
+            case 'box':
+                return platformData.size.z;
+            case 'circle':
+                return platformData.radius * 2;
+            case 'triangle':
+            case 'hexagon':
+            case 'star':
+                return platformData.size;
+            default:
+                return 1;
+        }
+    }
+    
+    // Animar la aparición de una plataforma
+    animatePlatformAppearance(platform) {
+        const startTime = Date.now();
+        const duration = 1000; // 1 segundo de animación
+        
+        const animate = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            
+            // Animar opacidad y escala
+            if (platform.material) {
+                platform.material.opacity = progress;
+            }
+            
+            const scale = 0.5 + (progress * 0.5); // Escala de 0.5 a 1.0
+            platform.scale.set(scale, scale, scale);
+            
+            if (progress < 1) {
+                requestAnimationFrame(animate);
+            } else {
+                // Asegurar valores finales
+                if (platform.material) {
+                    platform.material.opacity = 1;
+                }
+                platform.scale.set(1, 1, 1);
+            }
+        };
+        
+        animate();
     }
     
     // Crear efecto visual de destrucción de plataforma
@@ -1756,7 +2090,7 @@ class Game {
 
     // Actualizar la física del jugador
     updatePlayerPhysics(playerId, delta) {
-        if (!this.playerMeshes[playerId]) return;
+        if (!this.playerMeshes[playerId] || (playerId === this.playerId && this.hasWon)) return;
         
         const playerMesh = this.playerMeshes[playerId];
         let velocity = this.playerVelocity[playerId];
@@ -1822,6 +2156,16 @@ class Game {
             // Rotar el modelo en la dirección del movimiento
             const targetRotation = Math.atan2(moveDirection.x, moveDirection.z);
             playerMesh.rotation.y = targetRotation;
+            
+            // Enviar la rotación al servidor junto con la posición
+            if (playerId === this.playerId) {
+                this.socket.emit('updatePosition', {
+                    x: playerMesh.position.x,
+                    y: playerMesh.position.y,
+                    z: playerMesh.position.z,
+                    rotation: targetRotation
+                });
+            }
         } else {
             // Frenar gradualmente si no hay input
             const damping = isGrounded ? 0.9 : 0.95;
@@ -1887,66 +2231,89 @@ class Game {
 
     // Comprobar colisiones entre jugadores
     checkPlayerCollisions() {
-        const playerIds = Object.keys(this.players);
-        const PLAYER_RADIUS = 0.4; // Radio aproximado del jugador
+        const playerIds = Object.keys(this.playerMeshes);
+        const PLAYER_RADIUS = 0.4; // Radio de colisión de los jugadores
+        const PUSH_STRENGTH = 0.3; // Fuerza de empuje reducida para movimientos más suaves
         
         // Comprobar cada par de jugadores
         for (let i = 0; i < playerIds.length; i++) {
             const playerId1 = playerIds[i];
-            const player1 = this.players[playerId1];
             const mesh1 = this.playerMeshes[playerId1];
+            const velocity1 = this.playerVelocity[playerId1] || { x: 0, y: 0, z: 0 };
             
-            if (!player1 || !mesh1) continue;
+            if (!mesh1) continue;
             
             for (let j = i + 1; j < playerIds.length; j++) {
                 const playerId2 = playerIds[j];
-                const player2 = this.players[playerId2];
                 const mesh2 = this.playerMeshes[playerId2];
+                const velocity2 = this.playerVelocity[playerId2] || { x: 0, y: 0, z: 0 };
                 
-                if (!player2 || !mesh2) continue;
+                if (!mesh2) continue;
                 
-                // Calcular distancia en el plano horizontal (X,Z)
-                const dx = mesh1.position.x - mesh2.position.x;
-                const dz = mesh1.position.z - mesh2.position.z;
+                // Calcular distancia entre jugadores
+                const dx = mesh2.position.x - mesh1.position.x;
+                const dz = mesh2.position.z - mesh1.position.z;
                 const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
                 
-                // Calcular distancia vertical (Y)
-                const dy = Math.abs(mesh1.position.y - mesh2.position.y);
+                // Calcular distancia vertical
+                const dy = Math.abs(mesh2.position.y - mesh1.position.y);
                 
-                // Si están demasiado cerca en horizontal y a una altura similar
-                if (horizontalDistance < PLAYER_RADIUS * 2 && dy < 1) {
-                    // Calcular vector de separación
-                    const pushX = dx / horizontalDistance;
-                    const pushZ = dz / horizontalDistance;
+                // Si están lo suficientemente cerca para colisionar
+                if (horizontalDistance < PLAYER_RADIUS * 2 && dy < PLAYER_RADIUS * 2) {
+                    // Calcular dirección de separación
+                    const angle = Math.atan2(dz, dx);
+                    const pushX = Math.cos(angle);
+                    const pushZ = Math.sin(angle);
                     
-                    // Aplicar fuerza de separación
-                    const pushFactor = (PLAYER_RADIUS * 2 - horizontalDistance) / 2;
+                    // Calcular fuerza de empuje basada en las velocidades relativas
+                    const relativeVelX = velocity2.x - velocity1.x;
+                    const relativeVelZ = velocity2.z - velocity1.z;
+                    const impactSpeed = Math.sqrt(relativeVelX * relativeVelX + relativeVelZ * relativeVelZ);
                     
-                    // Aplicar al jugador local
+                    // Aplicar empuje suave
+                    const overlap = (PLAYER_RADIUS * 2) - horizontalDistance;
+                    const pushForce = Math.min(PUSH_STRENGTH * (1 + impactSpeed * 0.5), 1.0);
+                    
+                    // Aplicar el empuje a ambos jugadores
                     if (playerId1 === this.playerId) {
-                        player1.position.x += pushX * pushFactor;
-                        player1.position.z += pushZ * pushFactor;
-                        mesh1.position.x += pushX * pushFactor;
-                        mesh1.position.z += pushZ * pushFactor;
+                        mesh1.position.x -= pushX * overlap * pushForce;
+                        mesh1.position.z -= pushZ * overlap * pushForce;
+                        velocity1.x -= pushX * pushForce;
+                        velocity1.z -= pushZ * pushForce;
                     }
                     
-                    // Aplicar al otro jugador si es local
                     if (playerId2 === this.playerId) {
-                        player2.position.x -= pushX * pushFactor;
-                        player2.position.z -= pushZ * pushFactor;
-                        mesh2.position.x -= pushX * pushFactor;
-                        mesh2.position.z -= pushZ * pushFactor;
+                        mesh2.position.x += pushX * overlap * pushForce;
+                        mesh2.position.z += pushZ * overlap * pushForce;
+                        velocity2.x += pushX * pushForce;
+                        velocity2.z += pushZ * pushForce;
                     }
                     
-                    // Actualizar nametags después de mover jugadores
+                    // Actualizar velocidades
+                    if (playerId1 === this.playerId) {
+                        this.playerVelocity[playerId1] = velocity1;
+                    }
+                    if (playerId2 === this.playerId) {
+                        this.playerVelocity[playerId2] = velocity2;
+                    }
+                    
+                    // Actualizar nametags
                     this.updateNametagPosition(playerId1);
                     this.updateNametagPosition(playerId2);
                     
                     // Enviar posición actualizada al servidor si es el jugador local
                     if (playerId1 === this.playerId) {
-                        this.socket.emit('updatePosition', player1.position);
+                        this.socket.emit('updatePosition', {
+                            x: mesh1.position.x,
+                            y: mesh1.position.y,
+                            z: mesh1.position.z
+                        });
                     } else if (playerId2 === this.playerId) {
-                        this.socket.emit('updatePosition', player2.position);
+                        this.socket.emit('updatePosition', {
+                            x: mesh2.position.x,
+                            y: mesh2.position.y,
+                            z: mesh2.position.z
+                        });
                     }
                 }
             }
@@ -1957,148 +2324,103 @@ class Game {
     updateSpectatorControls() {
         // Cambiar a jugador anterior
         if (this.keys['q'] && !this.keysPrevState['q']) {
+            console.log('Tecla Q presionada - Cambiando al jugador anterior');
             this.switchToPreviousPlayer();
         }
         
         // Cambiar a jugador siguiente
         if (this.keys['e'] && !this.keysPrevState['e']) {
+            console.log('Tecla E presionada - Cambiando al siguiente jugador');
             this.switchToNextPlayer();
         }
         
-        // Salir de la sala
-        if (this.keys['escape'] && !this.keysPrevState['escape']) {
-            this.leaveRoom();
-        }
-        
         // Actualizar estado anterior de teclas
-        this.keysPrevState = {...this.keys};
+        this.keysPrevState = this.keysPrevState || {};
+        Object.keys(this.keys).forEach(key => {
+            this.keysPrevState[key] = this.keys[key];
+        });
     }
 
     // Cambiar a jugador anterior
     switchToPreviousPlayer() {
-        if (!this.isSpectator || this.alivePlayers.length === 0) return;
+        if (!this.isSpectator) return;
         
-        this.currentSpectatorIndex = (this.currentSpectatorIndex - 1 + this.alivePlayers.length) % this.alivePlayers.length;
-        this.switchToPlayer(this.alivePlayers[this.currentSpectatorIndex]);
+        // Obtener lista actualizada de jugadores vivos
+        const alivePlayers = Object.keys(this.players).filter(id => 
+            this.players[id] && !this.players[id].isSpectator && id !== this.playerId
+        );
+        
+        if (alivePlayers.length === 0) {
+            console.log('No hay jugadores vivos para observar');
+            return;
+        }
+        
+        // Encontrar el índice actual y calcular el anterior
+        let currentIndex = alivePlayers.indexOf(this.spectatingPlayerId);
+        if (currentIndex === -1) currentIndex = 0;
+        
+        const newIndex = (currentIndex - 1 + alivePlayers.length) % alivePlayers.length;
+        const newPlayerId = alivePlayers[newIndex];
+        
+        console.log(`Cambiando de ${this.spectatingPlayerId} a ${newPlayerId}`);
+        this.switchToPlayer(newPlayerId);
     }
 
     // Cambiar a jugador siguiente
     switchToNextPlayer() {
-        if (!this.isSpectator || this.alivePlayers.length === 0) return;
+        if (!this.isSpectator) return;
         
-        this.currentSpectatorIndex = (this.currentSpectatorIndex + 1) % this.alivePlayers.length;
-        this.switchToPlayer(this.alivePlayers[this.currentSpectatorIndex]);
+        // Obtener lista actualizada de jugadores vivos
+        const alivePlayers = Object.keys(this.players).filter(id => 
+            this.players[id] && !this.players[id].isSpectator && id !== this.playerId
+        );
+        
+        if (alivePlayers.length === 0) {
+            console.log('No hay jugadores vivos para observar');
+            return;
+        }
+        
+        // Encontrar el índice actual y calcular el siguiente
+        let currentIndex = alivePlayers.indexOf(this.spectatingPlayerId);
+        if (currentIndex === -1) currentIndex = 0;
+        
+        const newIndex = (currentIndex + 1) % alivePlayers.length;
+        const newPlayerId = alivePlayers[newIndex];
+        
+        console.log(`Cambiando de ${this.spectatingPlayerId} a ${newPlayerId}`);
+        this.switchToPlayer(newPlayerId);
     }
 
     // Cambiar a un jugador específico
     switchToPlayer(targetId) {
         if (!this.isSpectator || !this.players[targetId]) return;
         
+        console.log(`Cambiando vista a jugador ${targetId}`);
         this.spectatingPlayerId = targetId;
-        this.socket.emit('spectatorSwitchView', { targetId });
+        
+        // Actualizar la cámara para seguir al nuevo jugador
+        if (this.playerMeshes[targetId]) {
+            // Restablecer el ángulo de la cámara al cambiar de jugador
+            this.cameraAngle = 0;
+            this.zoomLevel = 10;
+            
+            // Posicionar la cámara detrás del nuevo jugador
+            const targetMesh = this.playerMeshes[targetId];
+            this.camera.position.set(
+                targetMesh.position.x,
+                targetMesh.position.y + this.cameraOffset.y,
+                targetMesh.position.z + this.zoomLevel
+            );
+            this.camera.lookAt(targetMesh.position);
+        }
         
         // Actualizar UI
         this.updateSpectatorUI();
     }
 
-    // Salir de la sala
-    leaveRoom() {
-        // Detener el juego primero
-        this.stop();
-        
-        // Notificar al servidor
-        this.socket.emit('leaveRoom');
-        
-        // Ocultar todas las pantallas
-        const screens = ['game-container', 'game-ui', 'lobby-screen', 'spectator-overlay'];
-        screens.forEach(screenId => {
-            const screen = document.getElementById(screenId);
-            if (screen) {
-                screen.style.display = 'none';
-                screen.style.opacity = '0';
-                screen.style.visibility = 'hidden';
-            }
-        });
-        
-        // Mostrar el menú principal
-        const menuScreen = document.getElementById('menu-screen');
-        if (menuScreen) {
-            menuScreen.style.display = 'block';
-            menuScreen.style.opacity = '1';
-            menuScreen.style.visibility = 'visible';
-            menuScreen.style.zIndex = '1000';
-            menuScreen.style.position = 'fixed';
-            menuScreen.style.top = '0';
-            menuScreen.style.left = '0';
-            menuScreen.style.width = '100%';
-            menuScreen.style.height = '100%';
-            menuScreen.style.backgroundColor = '#ffffff';
-        }
-        
-        // Limpiar el hash de la URL
-        window.location.hash = '#menu';
-        
-        // Forzar un reflow del DOM para asegurar que los cambios se aplican
-        document.body.offsetHeight;
-        
-        // Restablecer el fondo
-        document.body.style.backgroundColor = '#ffffff';
-        
-        // Limpiar cualquier overlay residual
-        const overlays = document.querySelectorAll('.message-overlay, .spectator-overlay');
-        overlays.forEach(overlay => {
-            if (overlay && overlay.parentNode) {
-                overlay.parentNode.removeChild(overlay);
-            }
-        });
-    }
-
-    // Actualizar UI del modo espectador
-    updateSpectatorUI() {
-        const spectatorOverlay = document.getElementById('spectator-overlay');
-        
-        if (this.isSpectator) {
-            // Crear o actualizar overlay de espectador
-            if (!spectatorOverlay) {
-                const overlay = document.createElement('div');
-                overlay.id = 'spectator-overlay';
-                overlay.className = 'spectator-overlay';
-                
-                const controls = document.createElement('div');
-                controls.className = 'spectator-controls';
-                controls.innerHTML = `
-                    <h2>Modo Espectador</h2>
-                    <p>¡Has perdido todas tus vidas!</p>
-                    <p>Usa Q y E para cambiar entre jugadores</p>
-                    <p>Presiona ESC para abandonar la sala</p>
-                    <div class="spectating-info">Observando a: <span id="spectating-name">Nadie</span></div>
-                `;
-                
-                const leaveButton = document.createElement('button');
-                leaveButton.className = 'leave-button';
-                leaveButton.textContent = 'Abandonar Sala';
-                leaveButton.onclick = () => this.leaveRoom();
-                
-                overlay.appendChild(controls);
-                overlay.appendChild(leaveButton);
-                
-                document.body.appendChild(overlay);
-            }
-            
-            // Actualizar nombre del jugador observado
-            const spectatingNameEl = document.getElementById('spectating-name');
-            if (spectatingNameEl && this.spectatingPlayerId && this.players[this.spectatingPlayerId]) {
-                spectatingNameEl.textContent = this.players[this.spectatingPlayerId].name || 'Desconocido';
-            }
-        } else if (spectatorOverlay) {
-            // Eliminar overlay si no somos espectador
-            document.body.removeChild(spectatorOverlay);
-        }
-    }
-
     // Entrar en modo espectador cuando el jugador pierde todas sus vidas
     enterSpectatorMode() {
-        if (this.isSpectator) return; // Evitar activar el modo espectador dos veces
+        if (this.isSpectator) return;
         
         console.log("Entrando en modo espectador");
         
@@ -2111,19 +2433,20 @@ class Game {
         }
         this.playerOnGround[this.playerId] = false;
         
+        // Obtener lista de jugadores vivos
+        const alivePlayers = Object.keys(this.players).filter(id => 
+            this.players[id] && !this.players[id].isSpectator && id !== this.playerId
+        );
+        
+        console.log('Jugadores vivos disponibles:', alivePlayers);
+        
+        // Seleccionar primer jugador para observar si hay alguno disponible
+        if (alivePlayers.length > 0) {
+            this.switchToPlayer(alivePlayers[0]);
+        }
+        
         // Notificar al servidor
         this.socket.emit('enterSpectatorMode');
-        
-        // Solicitar lista de jugadores vivos
-        this.socket.emit('getAlivePlayers', (alivePlayers) => {
-            this.alivePlayers = alivePlayers || [];
-            
-            // Seleccionar primer jugador para observar si hay alguno disponible
-            if (this.alivePlayers.length > 0) {
-                this.currentSpectatorIndex = 0;
-                this.switchToPlayer(this.alivePlayers[0]);
-            }
-        });
         
         // Mostrar mensaje e interfaz de espectador
         this.showSpectatorMessage();
@@ -2135,7 +2458,7 @@ class Game {
 
     // Manejador de caída en la lava
     playerFellInLava() {
-        if (this.isSpectator) return; // Los espectadores no mueren
+        if (this.isSpectator || this.hasWon) return;
         
         try {
             this.lives--;
@@ -2153,22 +2476,20 @@ class Game {
                 // Entrar en modo espectador
                 this.enterSpectatorMode();
             } else {
-                // Encontrar la plataforma más alta para respawn
-                let highestPlatform = null;
-                let maxHeight = -Infinity;
+                // Encontrar las plataformas más cercanas a la lava
+                const safePlatforms = this.platformMeshes
+                    .filter(platform => platform.position.y > this.lavaHeight)
+                    .sort((a, b) => a.position.y - b.position.y);
                 
-                for (const platform of this.platformMeshes) {
-                    if (platform.position.y > maxHeight && platform.position.y > this.lavaHeight) {
-                        maxHeight = platform.position.y;
-                        highestPlatform = platform;
-                    }
-                }
+                // Seleccionar la segunda plataforma más cercana si existe
+                const respawnPlatform = safePlatforms.length >= 2 ? safePlatforms[1] : 
+                                      safePlatforms.length === 1 ? safePlatforms[0] : null;
                 
                 // Si no hay plataforma segura, usar la posición inicial
-                const respawnPosition = highestPlatform ? {
-                    x: highestPlatform.position.x,
-                    y: highestPlatform.position.y + 2,
-                    z: highestPlatform.position.z
+                const respawnPosition = respawnPlatform ? {
+                    x: respawnPlatform.position.x,
+                    y: respawnPlatform.position.y + 2,
+                    z: respawnPlatform.position.z
                 } : {
                     x: 0,
                     y: 15,
@@ -2239,7 +2560,7 @@ class Game {
 
     // Usar ráfaga de aire
     useAirBlast() {
-        if (!this.canUseAirBlast || this.isSpectator) return;
+        if (!this.canUseAirBlast || this.isSpectator || this.airBlastCooldown > 0 || this.hasWon) return;
         
         // Obtener la dirección en la que mira el jugador
         const playerMesh = this.playerMeshes[this.playerId];
@@ -2269,65 +2590,271 @@ class Game {
             }
         });
         
-        // Reproducir efecto de sonido (silenciosamente si no existe)
+        // Reproducir efecto de sonido
         this.playSound('airblast.mp3', 0.4);
         
-        // Activar cooldown
+        // Activar cooldown inmediatamente
         this.canUseAirBlast = false;
         this.airBlastCooldown = this.airBlastCooldownTime;
         this.lastAirBlastTime = Date.now();
         
         // Actualizar UI de cooldown
         this.updateAirBlastCooldownUI();
+    }
+
+    // Crear efecto visual de la ráfaga de aire
+    createAirBlastEffect(position, direction) {
+        // SISTEMA DE PARTÍCULAS PRINCIPAL - Más sutil
+        const particleCount = 100; // Reducido de 300 a 100
+        const particlesGeometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const sizes = new Float32Array(particleCount);
+        const colors = new Float32Array(particleCount * 3);
         
-        // Iniciar temporizador de cooldown
-        setTimeout(() => {
-            this.canUseAirBlast = true;
+        // Colores más suaves
+        const baseColor = new THREE.Color(0x80e0ff); // Cian más claro
+        const secondaryColor = new THREE.Color(0x40ffaa); // Verde azulado más suave
+        
+        // Crear textura para partículas
+        const particleTexture = this.createGlowingParticleTexture();
+        
+        // Generar posiciones iniciales más concentradas
+        for (let i = 0; i < particleCount; i++) {
+            const offset = 0.1; // Reducido de 0.2 a 0.1
+            positions[i * 3] = position.x + (Math.random() - 0.5) * offset;
+            positions[i * 3 + 1] = position.y + (Math.random() - 0.5) * offset;
+            positions[i * 3 + 2] = position.z + (Math.random() - 0.5) * offset;
             
-            // Mostrar el efecto de listo en la UI
-            const cooldownBar = document.getElementById('cooldown-bar');
-            const cooldownText = document.getElementById('cooldown-text');
+            // Tamaños más pequeños
+            sizes[i] = 0.2 + Math.random() * 0.3; // Reducido de 0.4-1.2 a 0.2-0.5
+            
+            // Mezcla de colores más sutil
+            const mixFactor = Math.random();
+            const color = new THREE.Color().lerpColors(baseColor, secondaryColor, mixFactor);
+            
+            colors[i * 3] = color.r;
+            colors[i * 3 + 1] = color.g;
+            colors[i * 3 + 2] = color.b;
+        }
+        
+        // Configurar geometría
+        particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        particlesGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+        particlesGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        
+        // Material más sutil
+        const particlesMaterial = new THREE.PointsMaterial({
+            size: 0.4, // Reducido de 0.8 a 0.4
+            map: particleTexture,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            transparent: true,
+            vertexColors: true,
+            opacity: 0.6 // Reducido de 0.8 a 0.6
+        });
+        
+        const particles = new THREE.Points(particlesGeometry, particlesMaterial);
+        this.scene.add(particles);
+        
+        // Luz central más sutil
+        const coreLight = new THREE.PointLight(0x80e0ff, 2, 4); // Reducida intensidad y rango
+        coreLight.position.copy(position);
+        this.scene.add(coreLight);
+        
+        // Haz central más pequeño
+        const beamGeometry = new THREE.CylinderGeometry(0.1, 0.3, 2, 16); // Reducido tamaño
+        beamGeometry.rotateX(Math.PI / 2);
+        
+        const beamMesh = new THREE.Mesh(
+            beamGeometry,
+            new THREE.MeshBasicMaterial({
+                color: 0x80e0ff,
+                transparent: true,
+                opacity: 0.4, // Reducido de 0.7 a 0.4
+                blending: THREE.AdditiveBlending
+            })
+        );
+        
+        beamMesh.position.copy(position);
+        const quaternion = new THREE.Quaternion().setFromUnitVectors(
+            new THREE.Vector3(0, 0, 1),
+            direction
+        );
+        beamMesh.quaternion.copy(quaternion);
+        this.scene.add(beamMesh);
+        
+        // Anillo más pequeño
+        const ringGeometry = new THREE.RingGeometry(0.2, 0.3, 32);
+        const ringMaterial = new THREE.MeshBasicMaterial({
+            color: 0x80e0ff,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.4,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+        ring.position.copy(position);
+        ring.quaternion.copy(quaternion);
+        this.scene.add(ring);
+        
+        // Animación más rápida y sutil
+        const animationData = {
+            startTime: Date.now(),
+            duration: 0.8, // Reducido de 1.2 a 0.8 segundos
+            direction: direction.clone(),
+            coreLight: coreLight,
+            beam: beamMesh,
+            ring: ring,
+            particles: particles
+        };
+        
+        const animateBlast = () => {
+            if (!this.scene) return;
+            
+            const now = Date.now();
+            const elapsed = (now - animationData.startTime) / 1000;
+            const progress = elapsed / animationData.duration;
+            
+            if (progress >= 1) {
+                // Limpiar objetos
+                this.scene.remove(particles);
+                this.scene.remove(coreLight);
+                this.scene.remove(beamMesh);
+                this.scene.remove(ring);
+                
+                // Liberar recursos
+                particlesGeometry.dispose();
+                particlesMaterial.dispose();
+                beamGeometry.dispose();
+                beamMesh.material.dispose();
+                ringGeometry.dispose();
+                ringMaterial.dispose();
+                return;
+            }
+            
+            // Animar partículas
+            const positions = particles.geometry.attributes.position.array;
+            const sizes = particles.geometry.attributes.size.array;
+            const colors = particles.geometry.attributes.color.array;
+            
+            for (let i = 0; i < particleCount; i++) {
+                // Velocidad más controlada
+                const speed = 4 + Math.random() * 2; // Reducido de 6-10 a 4-6
+                const distance = speed * elapsed;
+                
+                // Dispersión más controlada
+                const dispersionFactor = Math.min(1, elapsed * 1.5);
+                const dispersionAngle = (Math.random() - 0.5) * (Math.PI / 8) * dispersionFactor;
+                
+                const particleDir = animationData.direction.clone();
+                particleDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), dispersionAngle * (i % 2 ? 1 : -1));
+                particleDir.applyAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * (Math.PI / 8) * dispersionFactor);
+                
+                // Turbulencia reducida
+                const turbulence = 0.1 * Math.sin(elapsed * 8 + i);
+                particleDir.x += turbulence * (i % 2 ? 1 : -1) * dispersionFactor;
+                particleDir.y += turbulence * (i % 3 ? 1 : -1) * dispersionFactor;
+                
+                positions[i * 3] = position.x + particleDir.x * distance;
+                positions[i * 3 + 1] = position.y + particleDir.y * distance;
+                positions[i * 3 + 2] = position.z + particleDir.z * distance;
+                
+                sizes[i] *= (0.99 - progress * 0.6);
+                
+                const idx = i * 3;
+                const fadeOutStart = 0.5; // Comienza a desvanecer antes
+                if (progress > fadeOutStart) {
+                    const opacity = 1 - ((progress - fadeOutStart) / (1 - fadeOutStart));
+                    colors[idx + 0] *= opacity;
+                    colors[idx + 1] *= opacity;
+                    colors[idx + 2] *= opacity;
+                }
+            }
+            
+            // Animar luz
+            coreLight.intensity = 2 * (1 - progress);
+            coreLight.position.add(animationData.direction.clone().multiplyScalar(elapsed * 0.1));
+            
+            // Animar haz
+            beamMesh.material.opacity = 0.4 * (1 - progress);
+            beamMesh.scale.set(
+                1 + progress * 0.5,
+                1 + progress * 0.5,
+                1 + progress * 1.5
+            );
+            beamMesh.position.add(animationData.direction.clone().multiplyScalar(elapsed * 0.3));
+            
+            // Animar anillo
+            ring.scale.set(
+                1 + progress * 4,
+                1 + progress * 4,
+                1
+            );
+            ring.material.opacity = 0.4 * (1 - progress);
+            ring.position.add(animationData.direction.clone().multiplyScalar(elapsed * 0.2));
+            
+            // Actualizar geometrías
+            particles.geometry.attributes.position.needsUpdate = true;
+            particles.geometry.attributes.size.needsUpdate = true;
+            particles.geometry.attributes.color.needsUpdate = true;
+            
+            requestAnimationFrame(animateBlast);
+        };
+        
+        animateBlast();
+    }
+
+    // Actualizar la UI del cooldown de la ráfaga de aire
+    updateAirBlastCooldownUI() {
+        let cooldownContainer = document.getElementById('airblast-cooldown-container');
+        
+        if (!cooldownContainer) {
+            // Crear contenedor si no existe (código existente...)
+        }
+        
+        // Mostrar la barra llena y bloquear uso
+        const cooldownBar = document.getElementById('cooldown-bar');
+        const cooldownText = document.getElementById('cooldown-text');
+        
+        if (cooldownBar && cooldownText) {
+            cooldownBar.style.width = '100%';
+            cooldownText.textContent = 'RECARGANDO...';
+            this.canUseAirBlast = false;
+        }
+        
+        // Animar la barra gradualmente
+        const updateBar = () => {
+            if (!this.isRunning) return;
+            
+            const elapsed = (Date.now() - this.lastAirBlastTime) / 1000;
+            const remaining = Math.max(0, this.airBlastCooldownTime - elapsed);
+            const percent = (remaining / this.airBlastCooldownTime) * 100;
+            
             if (cooldownBar) {
-                cooldownBar.style.width = '0%';
-            }
-            if (cooldownText) {
-                cooldownText.textContent = 'LISTO';
-            }
-            
-            // Mostrar animación de habilidad lista
-            this.showAirBlastReadyAnimation();
-        }, this.airBlastCooldownTime * 1000);
-    }
-    
-    // Mostrar animación cuando la ráfaga de aire está lista
-    showAirBlastReadyAnimation() {
-        const container = document.getElementById('airblast-cooldown-container');
-        if (!container) return;
-        
-        // Añadir animación de destello
-        container.style.animation = 'none';
-        setTimeout(() => {
-            container.style.animation = 'airblastReady 0.6s ease-in-out';
-            
-            // Crear y añadir keyframes para la animación si no existen
-            if (!document.getElementById('airblast-animation-styles')) {
-                const styleSheet = document.createElement('style');
-                styleSheet.id = 'airblast-animation-styles';
-                styleSheet.textContent = `
-                    @keyframes airblastReady {
-                        0% { box-shadow: 0 0 10px rgba(64, 224, 255, 0.5); transform: scale(1); }
-                        50% { box-shadow: 0 0 20px rgba(64, 224, 255, 0.8); transform: scale(1.05); }
-                        100% { box-shadow: 0 0 10px rgba(64, 224, 255, 0.5); transform: scale(1); }
+                cooldownBar.style.width = `${percent}%`;
+                
+                if (cooldownText) {
+                    if (percent > 0) {
+                        cooldownText.textContent = `${remaining.toFixed(1)}s`;
+                        this.canUseAirBlast = false; // Mantener bloqueado mientras hay cooldown
+                    } else {
+                        cooldownText.textContent = 'LISTO';
+                        this.canUseAirBlast = true; // Habilitar solo cuando el cooldown termina
+                        this.airBlastCooldown = 0;
+                        this.showAirBlastReadyAnimation();
                     }
-                `;
-                document.head.appendChild(styleSheet);
+                }
             }
             
-            // Reproducir sonido de listo
-            this.playSound('ability_ready.mp3', 0.5);
-        }, 10);
+            if (percent > 0 && this.isRunning) {
+                requestAnimationFrame(updateBar);
+            }
+        };
+        
+        updateBar();
     }
-    
+
     // Método para reproducir sonidos de forma segura
     playSound(filename, volume = 0.5) {
         try {
@@ -2363,15 +2890,11 @@ class Game {
             z: Number(pushVector.z)
         };
         
-        // Aplicar la fuerza a la velocidad del jugador
-        // Con un factor de control para hacer el efecto más consistente
-        const velocityFactor = 0.8; // Reducir ligeramente el impacto total
+        // Aplicar la fuerza a la velocidad del jugador con un factor aumentado
+        const velocityFactor = 1.2; // Aumentado de 0.8 a 1.2 para más fuerza
         this.playerVelocity[this.playerId].x = force.x * velocityFactor;
         this.playerVelocity[this.playerId].y = force.y * velocityFactor;
         this.playerVelocity[this.playerId].z = force.z * velocityFactor;
-        
-        // No aplicar impulso inmediato a la posición para evitar desincronización
-        // Solo actualizar la velocidad y dejar que la física se encargue
         
         // Actualizar el nametag
         this.updateNametagPosition(this.playerId);
@@ -2379,292 +2902,68 @@ class Game {
         console.log("Velocidad aplicada:", this.playerVelocity[this.playerId]);
     }
     
-    // Actualizar la UI del cooldown de la ráfaga de aire
-    updateAirBlastCooldownUI() {
-        // Verificar si la UI de cooldown existe
-        let cooldownContainer = document.getElementById('airblast-cooldown-container');
-        
-        // Si no existe, crearla
-        if (!cooldownContainer) {
-            // Contenedor principal
-            cooldownContainer = document.createElement('div');
-            cooldownContainer.id = 'airblast-cooldown-container';
-            cooldownContainer.style.position = 'fixed';
-            cooldownContainer.style.bottom = '20px';
-            cooldownContainer.style.right = '20px';
-            cooldownContainer.style.width = '180px';
-            cooldownContainer.style.height = '40px';
-            cooldownContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.6)';
-            cooldownContainer.style.borderRadius = '20px';
-            cooldownContainer.style.display = 'flex';
-            cooldownContainer.style.alignItems = 'center';
-            cooldownContainer.style.padding = '0 5px';
-            cooldownContainer.style.boxShadow = '0 0 10px rgba(64, 224, 255, 0.5)';
-            cooldownContainer.style.border = '2px solid rgba(64, 224, 255, 0.7)';
-            cooldownContainer.style.zIndex = '1001';
-            
-            // Crear el icono de ráfaga de aire
-            const iconContainer = document.createElement('div');
-            iconContainer.style.width = '30px';
-            iconContainer.style.height = '30px';
-            iconContainer.style.borderRadius = '50%';
-            iconContainer.style.backgroundColor = '#40e0ff';
-            iconContainer.style.display = 'flex';
-            iconContainer.style.justifyContent = 'center';
-            iconContainer.style.alignItems = 'center';
-            iconContainer.style.marginRight = '10px';
-            iconContainer.style.boxShadow = '0 0 5px #40e0ff';
-            
-            // SVG para el icono de viento/aire
-            iconContainer.innerHTML = `
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M3 8H15C16.7 8 18 9.3 18 11C18 12.7 16.7 14 15 14H3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M3 16H19C20.7 16 22 14.7 22 13C22 11.3 20.7 10 19 10" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M3 12H13C14.7 12 16 13.3 16 15C16 16.7 14.7 18 13 18H3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            `;
-            
-            // Contenedor para la barra de progreso
-            const progressContainer = document.createElement('div');
-            progressContainer.style.flex = '1';
-            progressContainer.style.height = '15px';
-            progressContainer.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-            progressContainer.style.borderRadius = '10px';
-            progressContainer.style.overflow = 'hidden';
-            progressContainer.style.position = 'relative';
-            
-            // Barra de progreso
-            const cooldownBar = document.createElement('div');
-            cooldownBar.id = 'cooldown-bar';
-            cooldownBar.style.height = '100%';
-            cooldownBar.style.width = '100%';
-            cooldownBar.style.backgroundColor = '#40e0ff';
-            cooldownBar.style.borderRadius = '10px';
-            cooldownBar.style.transition = 'width 0.1s linear';
-            cooldownBar.style.position = 'absolute';
-            cooldownBar.style.left = '0';
-            cooldownBar.style.top = '0';
-            
-            // Texto de cooldown
-            const cooldownText = document.createElement('div');
-            cooldownText.id = 'cooldown-text';
-            cooldownText.style.position = 'absolute';
-            cooldownText.style.top = '50%';
-            cooldownText.style.left = '50%';
-            cooldownText.style.transform = 'translate(-50%, -50%)';
-            cooldownText.style.color = 'white';
-            cooldownText.style.fontSize = '10px';
-            cooldownText.style.fontWeight = 'bold';
-            cooldownText.style.textShadow = '0 0 3px rgba(0, 0, 0, 0.8)';
-            cooldownText.textContent = 'LISTO';
-            
-            // Añadir todo al DOM
-            progressContainer.appendChild(cooldownBar);
-            progressContainer.appendChild(cooldownText);
-            cooldownContainer.appendChild(iconContainer);
-            cooldownContainer.appendChild(progressContainer);
-            document.body.appendChild(cooldownContainer);
-        }
-        
-        // Mostrar la barra llena
-        const cooldownBar = document.getElementById('cooldown-bar');
-        const cooldownText = document.getElementById('cooldown-text');
-        
-        if (cooldownBar && cooldownText) {
-            cooldownBar.style.width = '100%';
-            cooldownText.textContent = 'RECARGANDO...';
-        }
-        
-        // Animar la barra gradualmente
-        const updateBar = () => {
-            if (!this.isRunning) return; // No actualizar si el juego no está corriendo
-            
-            const elapsed = (Date.now() - this.lastAirBlastTime) / 1000;
-            const remaining = Math.max(0, this.airBlastCooldownTime - elapsed);
-            const percent = (remaining / this.airBlastCooldownTime) * 100;
-            
-            if (cooldownBar) {
-                cooldownBar.style.width = `${percent}%`;
-                
-                // Actualizar texto con el tiempo restante
-                if (cooldownText) {
-                    if (percent > 0) {
-                        cooldownText.textContent = `${remaining.toFixed(1)}s`;
-                    } else {
-                        cooldownText.textContent = 'LISTO';
-                        this.showAirBlastReadyAnimation();
-                    }
-                }
-            }
-            
-            if (percent > 0 && this.isRunning) {
-                requestAnimationFrame(updateBar);
-            }
-        };
-        
-        updateBar();
-    }
-
-    // Crear efecto visual de la ráfaga de aire
-    createAirBlastEffect(position, direction) {
-        // Crear una textura cuadrada para las partículas
-        const texture = this.createSquareTexture();
-        
-        // Número de partículas
-        const particleCount = 120;
-        
-        // Crear geometría para las partículas
-        const particlesGeometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(particleCount * 3);
-        const sizes = new Float32Array(particleCount);
-        const colors = new Float32Array(particleCount * 3);
-        
-        // Color base - Cyan claro
-        const baseColor = new THREE.Color(0x40e0ff);
-        
-        // Generar posiciones iniciales de las partículas
-        for (let i = 0; i < particleCount; i++) {
-            // Posición inicial (ligeramente dispersa alrededor del punto de origen)
-            const offset = 0.1; // Menor dispersión inicial para un inicio más concentrado
-            positions[i * 3] = position.x + (Math.random() - 0.5) * offset;
-            positions[i * 3 + 1] = position.y + (Math.random() - 0.5) * offset;
-            positions[i * 3 + 2] = position.z + (Math.random() - 0.5) * offset;
-            
-            // Tamaño de partícula
-            sizes[i] = 0.3 * (0.8 + Math.random() * 0.4); // Tamaño más consistente
-            
-            // Color con variación
-            const colorVariation = 0.1;
-            const color = baseColor.clone();
-            color.r += (Math.random() - 0.5) * colorVariation;
-            color.g += (Math.random() - 0.5) * colorVariation;
-            color.b += (Math.random() - 0.5) * colorVariation;
-            
-            colors[i * 3] = color.r;
-            colors[i * 3 + 1] = color.g;
-            colors[i * 3 + 2] = color.b;
-        }
-        
-        // Configurar geometría
-        particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        particlesGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-        particlesGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        
-        // Material de partículas
-        const particlesMaterial = new THREE.PointsMaterial({
-            size: 0.3,
-            map: texture,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            transparent: true,
-            vertexColors: true
-        });
-        
-        // Crear sistema de partículas
-        const particles = new THREE.Points(particlesGeometry, particlesMaterial);
-        this.scene.add(particles);
-        
-        // Datos de animación
-        const animationData = {
-            startTime: Date.now(),
-            duration: 1.0, // Duración más corta para efecto más rápido
-            direction: direction.clone(),
-            speed: 0.13, // Velocidad más lenta para coincidir con el empuje más suave
-            maxDistance: 10, // Mayor distancia máxima
-            maxDispersion: 3, // Menor dispersión para un efecto más enfocado
-            particles: particles
-        };
-        
-        // Función de animación
-        const animateBlast = () => {
-            if (!this.scene) return;
-            
-            const now = Date.now();
-            const elapsed = (now - animationData.startTime) / 1000;
-            const progress = elapsed / animationData.duration;
-            
-            if (progress >= 1) {
-                // Eliminar partículas al terminar
-                this.scene.remove(particles);
-                particlesGeometry.dispose();
-                particlesMaterial.dispose();
-                return;
-            }
-            
-            // Actualizar posiciones
-            const positions = particles.geometry.attributes.position.array;
-            const sizes = particles.geometry.attributes.size.array;
-            const colors = particles.geometry.attributes.color.array;
-            
-            for (let i = 0; i < particleCount; i++) {
-                // Calcular nueva posición
-                const speed = animationData.speed * (1 + Math.random() * 0.2); // Variación de velocidad
-                const distance = speed * elapsed * (1 + i % 3); // Velocidad variable por partícula
-                
-                // Calcular ángulo de dispersión (menor para un cono más estrecho)
-                const dispersionAngle = (Math.random() - 0.5) * (Math.PI / 8);
-                const dispersionFactor = Math.min(1, elapsed * 0.15); // Aumento gradual de dispersión
-                
-                // Crear vector de dirección con dispersión
-                const particleDir = animationData.direction.clone();
-                
-                // Aplicar rotación para dispersión
-                particleDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), dispersionAngle * dispersionFactor);
-                particleDir.applyAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * (Math.PI / 8) * dispersionFactor);
-                
-                // Aplicar movimiento
-                positions[i * 3] = position.x + particleDir.x * distance * (1 + Math.random() * 0.5);
-                positions[i * 3 + 1] = position.y + particleDir.y * distance * (1 + Math.random() * 0.5) + Math.sin(progress * Math.PI) * 0.3; // Arco ligero
-                positions[i * 3 + 2] = position.z + particleDir.z * distance * (1 + Math.random() * 0.5);
-                
-                // Reducir tamaño gradualmente
-                const sizeProgress = Math.min(1, elapsed * 2); // Reducción más rápida
-                sizes[i] *= (1 - sizeProgress * 0.01);
-                
-                // Reducir opacidad (mediante color)
-                const opacity = 1 - progress;
-                colors[i * 3 + 0] *= opacity;
-                colors[i * 3 + 1] *= opacity;
-                colors[i * 3 + 2] *= opacity;
-            }
-            
-            // Actualizar geometría
-            particles.geometry.attributes.position.needsUpdate = true;
-            particles.geometry.attributes.size.needsUpdate = true;
-            particles.geometry.attributes.color.needsUpdate = true;
-            
-            // Continuar animación
-            requestAnimationFrame(animateBlast);
-        };
-        
-        // Iniciar animación
-        animateBlast();
-        
-        return particles;
-    }
-
-    // Crear textura cuadrada para las partículas
-    createSquareTexture() {
+    // Crear textura de partícula con brillo
+    createGlowingParticleTexture() {
         const canvas = document.createElement('canvas');
-        canvas.width = 16;
-        canvas.height = 16;
-        const ctx = canvas.getContext('2d');
+        const size = 64;
+        canvas.width = size;
+        canvas.height = size;
         
-        // Dibujar un cuadrado pixelado
-        ctx.fillStyle = 'white';
-        ctx.fillRect(0, 0, 16, 16);
+        const context = canvas.getContext('2d');
         
-        // Añadir un borde suave
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-        ctx.fillRect(0, 0, 16, 1);
-        ctx.fillRect(0, 15, 16, 1);
-        ctx.fillRect(0, 0, 1, 16);
-        ctx.fillRect(15, 0, 1, 16);
+        // Gradiente radial para efecto de glow
+        const gradient = context.createRadialGradient(
+            size / 2, size / 2, 0,
+            size / 2, size / 2, size / 2
+        );
         
-        const texture = new THREE.CanvasTexture(canvas);
-        texture.magFilter = THREE.NearestFilter;
-        texture.minFilter = THREE.NearestFilter;
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+        gradient.addColorStop(0.3, 'rgba(160, 255, 255, 0.8)');
+        gradient.addColorStop(0.6, 'rgba(64, 224, 255, 0.4)');
+        gradient.addColorStop(1, 'rgba(64, 224, 255, 0)');
+        
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, size, size);
+        
+        const texture = new THREE.Texture(canvas);
+        texture.needsUpdate = true;
+        
         return texture;
+    }
+
+    // Mostrar efecto visual de ráfaga de aire entre dos jugadores
+    showAirBlastBetweenPlayers(fromId, targetId) {
+        // Verificar que ambos jugadores existen
+        const sourceMesh = this.playerMeshes[fromId];
+        const targetMesh = this.playerMeshes[targetId];
+        
+        if (!sourceMesh || !targetMesh) return;
+        
+        // Posición del jugador origen
+        const sourcePosition = sourceMesh.position.clone();
+        
+        // Calcular dirección hacia el jugador objetivo
+        const direction = new THREE.Vector3()
+            .copy(targetMesh.position)
+            .sub(sourcePosition)
+            .normalize();
+        
+        // Crear efecto visual de la ráfaga
+        this.createAirBlastEffect(sourcePosition, direction);
+        
+        console.log(`Mostrando ráfaga de aire de ${fromId} a ${targetId}`);
+    }
+
+    // Obtener un color aleatorio para la plataforma
+    getRandomPlatformColor() {
+        const colors = [
+            0x8BC34A, // Verde original
+            0x4CAF50, // Verde más oscuro
+            0xA5D6A7, // Verde más claro
+            0x81C784, // Verde medio
+            0x66BB6A  // Verde brillante
+        ];
+        return colors[Math.floor(Math.random() * colors.length)];
     }
 }
 

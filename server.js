@@ -40,7 +40,7 @@ io.on('connection', (socket) => {
       players: {},
       maxPlayers: maxPlayers || 4,
       gameStarted: false,
-      lavaHeight: -10, // Altura inicial de la lava
+      lavaHeight: -5, // Altura inicial de la lava
       platforms: generateInitialPlatforms()
     };
     
@@ -442,6 +442,21 @@ io.on('connection', (socket) => {
     console.log('Usuario desconectado: ' + socket.id);
     leaveCurrentRoom(socket);
   });
+
+  // Manejar generación de nuevas plataformas
+  socket.on('newPlatformsGenerated', (platformsData) => {
+    // Obtener la sala del jugador
+    const room = getRoomByPlayerId(socket.id);
+    if (!room) return;
+    
+    // Guardar las plataformas en el estado de la sala
+    room.platforms = room.platforms || [];
+    room.platforms = room.platforms.filter(p => p.position.y < Math.min(...platformsData.map(p => p.position.y)));
+    room.platforms = [...room.platforms, ...platformsData];
+    
+    // Emitir las plataformas a todos los jugadores en la sala
+    io.to(room.id).emit('syncNewPlatforms', platformsData);
+  });
 });
 
 // Función para que un jugador abandone su sala actual
@@ -617,6 +632,13 @@ function getRandomPlayerColor() {
     '#FB5607', '#8338EC', '#3A86FF', '#FF006E'
   ];
   return colors[Math.floor(Math.random() * colors.length)];
+}
+
+// Función para obtener la sala de un jugador por su ID
+function getRoomByPlayerId(playerId) {
+    return Object.values(rooms).find(room => 
+        room.players && Object.keys(room.players).includes(playerId)
+    );
 }
 
 // Iniciar el servidor
