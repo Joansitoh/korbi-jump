@@ -240,6 +240,100 @@ io.on('connection', (socket) => {
     console.log(`Jugador ${socket.id} aplicó ráfaga de aire a ${targetId} en sala ${roomId}`);
   });
 
+  // Usar ráfaga de aire (nuevo evento)
+  socket.on('useAirBlast', (data) => {
+    const roomId = socket.data.roomId;
+    if (!roomId || !rooms[roomId]) return;
+    
+    const { position, direction } = data;
+    
+    // Notificar a todos los jugadores sobre el efecto visual
+    io.to(roomId).emit('airBlastEffect', {
+      position,
+      direction
+    });
+    
+    // Calcular jugadores afectados
+    const blastRange = 10; // Mayor alcance
+    const blastAngle = Math.PI / 3; // 60 grados
+    const pushForce = 30; // Fuerza más baja para un empuje más suave
+    
+    Object.keys(rooms[roomId].players).forEach(targetId => {
+      if (targetId === socket.id) return; // No afectar al jugador que la usa
+      
+      const targetPlayer = rooms[roomId].players[targetId];
+      const targetPos = targetPlayer.position;
+      
+      // Vector desde la posición de la ráfaga al objetivo
+      const dx = targetPos.x - position.x;
+      const dy = targetPos.y - position.y;
+      const dz = targetPos.z - position.z;
+      
+      // Calcular distancia
+      const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      
+      // Comprobar si está en rango
+      if (distance <= blastRange) {
+        // Normalizar el vector hacia el objetivo
+        const toTargetX = dx / distance;
+        const toTargetZ = dz / distance;
+        
+        // Normalizar el vector de dirección
+        const dirLength = Math.sqrt(direction.x*direction.x + direction.z*direction.z);
+        const dirNormX = direction.x / dirLength;
+        const dirNormZ = direction.z / dirLength;
+        
+        // Calcular producto escalar para el ángulo
+        const dot = toTargetX * dirNormX + toTargetZ * dirNormZ;
+        const clampedDot = Math.max(-1, Math.min(1, dot));
+        const angle = Math.acos(clampedDot);
+        
+        // Si está dentro del cono de efecto
+        if (angle <= blastAngle / 2) {
+          // Calcular fuerza basada en la distancia
+          const forceFactor = 1 - (distance / blastRange);
+          const forceMagnitude = pushForce * forceFactor;
+          
+          // Calcular vector de empuje con menos componente vertical
+          const pushVector = {
+            x: dirNormX * forceMagnitude * 1.5, // Aumentar componente horizontal
+            y: forceMagnitude * 0.3, // Reducir componente vertical significativamente
+            z: dirNormZ * forceMagnitude * 1.5  // Aumentar componente horizontal
+          };
+          
+          console.log(`[SERVIDOR] Aplicando ráfaga de aire a ${targetId} con fuerza:`, pushVector);
+          
+          // Emitir el empuje al cliente objetivo
+          io.to(targetId).emit('airBlastPush', {
+            targetId: targetId,
+            pushVector: pushVector
+          });
+        }
+      }
+    });
+    
+    console.log(`Jugador ${socket.id} usó ráfaga de aire en sala ${roomId}`);
+  });
+
+  // Recibir información de impacto de ráfaga de aire
+  socket.on('airBlastHit', (data) => {
+    const roomId = socket.data.roomId;
+    if (!roomId || !rooms[roomId]) return;
+    
+    const { targetId, force } = data;
+    
+    // Verificar que el jugador objetivo existe
+    if (!targetId || !rooms[roomId].players[targetId]) return;
+    
+    console.log(`[SERVIDOR] Retransmitiendo impacto de ráfaga de aire a ${targetId} con fuerza:`, force);
+    
+    // Reenviar el evento al jugador afectado
+    io.to(targetId).emit('airBlastPush', {
+      targetId: targetId,
+      pushVector: force
+    });
+  });
+
   // Abandonar sala
   socket.on('leaveRoom', () => {
     leaveCurrentRoom(socket);

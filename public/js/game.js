@@ -57,9 +57,9 @@ class Game {
         this.gameTime = 0;
         
         // Mecánica de ráfaga de aire
-        this.airBlastCooldown = 0;
         this.canUseAirBlast = true;
-        this.airBlastCooldownTime = 2; // Segundos de cooldown
+        this.airBlastCooldownTime = 3; // segundos
+        this.lastAirBlastTime = 0;
         
         // Sistema de vidas y espectador
         this.lives = 3;
@@ -80,6 +80,42 @@ class Game {
         // Cargar modelo de Kirby
         this.kirbyModel = null;
         this.loadingKirby = false;
+        
+        // Array para mantener registro de animaciones activas
+        this.activeAnimations = [];
+        
+        // Configurar evento para recibir efectos de ráfaga de aire
+        this.socket.on('airBlastEffect', (data) => {
+            const { position, direction } = data;
+            if (position && direction) {
+                console.log('Recibido efecto de ráfaga');
+                const pos = new THREE.Vector3(position.x, position.y, position.z);
+                const dir = new THREE.Vector3(direction.x, direction.y, direction.z);
+                this.createAirBlastEffect(pos, dir);
+            }
+        });
+        
+        // Configurar evento para recibir empuje de ráfaga de aire
+        this.socket.on('airBlastPush', (data) => {
+            const { targetId, pushVector } = data;
+            
+            // Solo aplicar si este cliente es el objetivo
+            if (targetId === this.playerId) {
+                console.log('Recibido empuje de ráfaga con fuerza:', pushVector);
+                
+                // Aplicar el empuje a nuestro jugador
+                this.applyServerPush(pushVector);
+            }
+        });
+        
+        // Compatibilidad con sistema antiguo
+        this.socket.on('receivedAirBlast', (data) => {
+            const { velocity } = data;
+            console.log('Recibido evento legacy de ráfaga:', velocity);
+            if (velocity) {
+                this.applyServerPush(velocity);
+            }
+        });
     }
     
     // Iniciar el juego
@@ -120,7 +156,7 @@ class Game {
             gameUI.style.textShadow = '2px 2px 4px rgba(0,0,0,0.5)';
             gameUI.style.fontFamily = "'Fredoka', sans-serif";
             gameUI.style.fontSize = '18px';
-            gameUI.style.backgroundColor = 'rgba(0,0,0,0.5)';
+            // gameUI.style.backgroundColor = 'rgba(0,0,0,0.5)';
             gameUI.style.padding = '15px';
             gameUI.style.borderRadius = '10px';
             gameUI.style.minWidth = '200px';
@@ -155,15 +191,180 @@ class Game {
     stop() {
         if (!this.isRunning) return;
         
+        console.log("Deteniendo juego y limpiando estado...");
+        
+        // Detener el juego antes de limpiar
         this.isRunning = false;
         cancelAnimationFrame(this.gameLoopId);
         
-        this.container.innerHTML = '';
+        // Cancelar todas las animaciones en curso
+        this.activeAnimations = this.activeAnimations || [];
+        this.activeAnimations.forEach(animation => {
+            if (animation && animation.cancel) {
+                animation.cancel();
+            }
+        });
+        this.activeAnimations = [];
+        
+        // Limpiar eventos
         window.removeEventListener('resize', this.onWindowResize.bind(this));
         document.removeEventListener('keydown', this.onKeyDown.bind(this));
         document.removeEventListener('keyup', this.onKeyUp.bind(this));
         document.removeEventListener('mousemove', this.onMouseMove.bind(this));
+        document.removeEventListener('mousedown', this.onMouseDown.bind(this));
+        document.removeEventListener('mouseup', this.onMouseUp.bind(this));
         document.removeEventListener('wheel', this.onWheel.bind(this));
+        
+        // Limpiar UI y elementos del juego
+        this.cleanupGame();
+        
+        // Restablecer variables de estado
+        this.resetGameState();
+        
+        // Mostrar la sala de espera
+        this.showLobbyScreen();
+        
+        // Forzar una actualización del DOM para asegurar que los cambios se aplican
+        requestAnimationFrame(() => {
+            // Asegurar que el contenedor del juego está oculto
+            const gameContainer = document.getElementById('game-container');
+            if (gameContainer) {
+                gameContainer.style.display = 'none';
+                gameContainer.innerHTML = '';
+            }
+            
+            // Asegurar que la UI del juego está oculta
+            const gameUI = document.getElementById('game-ui');
+            if (gameUI) {
+                gameUI.style.display = 'none';
+            }
+            
+            // Mostrar el lobby explícitamente
+            const lobbyScreen = document.getElementById('lobby-screen');
+            if (lobbyScreen) {
+                lobbyScreen.style.display = 'block';
+                lobbyScreen.style.opacity = '1';
+                lobbyScreen.style.visibility = 'visible';
+            }
+        });
+    }
+    
+    // Limpiar todos los elementos del juego
+    cleanupGame() {
+        // Limpiar escena
+        if (this.scene) {
+            while(this.scene.children.length > 0) { 
+                const object = this.scene.children[0];
+                if (object.geometry) object.geometry.dispose();
+                if (object.material) {
+                    if (Array.isArray(object.material)) {
+                        object.material.forEach(material => material.dispose());
+                    } else {
+                        object.material.dispose();
+                    }
+                }
+                this.scene.remove(object);
+            }
+        }
+        
+        // Limpiar renderer
+        if (this.renderer) {
+            this.renderer.dispose();
+            this.container.removeChild(this.renderer.domElement);
+        }
+        
+        // Limpiar UI del juego
+        const gameUI = document.getElementById('game-ui');
+        if (gameUI) gameUI.style.display = 'none';
+        
+        // Limpiar UI del espectador
+        const spectatorOverlay = document.getElementById('spectator-overlay');
+        if (spectatorOverlay) spectatorOverlay.remove();
+        
+        // Limpiar otros overlays
+        const messageOverlays = document.querySelectorAll('.message-overlay');
+        messageOverlays.forEach(overlay => overlay.remove());
+        
+        // Ocultar contenedor del juego
+        const gameContainer = document.getElementById('game-container');
+        if (gameContainer) {
+            gameContainer.style.display = 'none';
+            gameContainer.innerHTML = '';
+        }
+    }
+    
+    // Restablecer variables de estado del juego
+    resetGameState() {
+        // Restablecer propiedades básicas
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.clock = null;
+        
+        // Limpiar referencias a objetos del juego
+        this.playerMeshes = {};
+        this.platformMeshes = [];
+        this.lavaMesh = null;
+        this.lavaLight = null;
+        this.lavaParticles = null;
+        
+        // Restablecer física y movimiento
+        this.playerVelocity = {};
+        this.playerOnGround = {};
+        this.keys = {};
+        this.mouse = { x: 0, y: 0 };
+        
+        // Restablecer estado del juego
+        this.isSpectator = false;
+        this.spectatingPlayerId = null;
+        this.lives = 3;
+        this.maxHeight = 0;
+        this.gameTime = 0;
+        this.canUseAirBlast = true;
+        this.airBlastCooldown = 0;
+        
+        // Limpiar nametags
+        this.nameTags = {};
+    }
+    
+    // Mostrar la sala de espera
+    showLobbyScreen() {
+        // Ocultar todas las pantallas excepto el lobby
+        const screens = ['game-container', 'game-ui', 'menu-screen', 'create-room-screen', 'join-room-screen'];
+        screens.forEach(screenId => {
+            const screen = document.getElementById(screenId);
+            if (screen) {
+                screen.style.display = 'none';
+                screen.style.opacity = '0';
+                screen.style.visibility = 'hidden';
+            }
+        });
+        
+        // Mostrar la sala de espera
+        const lobbyScreen = document.getElementById('lobby-screen');
+        if (lobbyScreen) {
+            lobbyScreen.style.display = 'block';
+            lobbyScreen.style.opacity = '1';
+            lobbyScreen.style.visibility = 'visible';
+            lobbyScreen.style.zIndex = '1000';
+            lobbyScreen.style.position = 'fixed';
+            lobbyScreen.style.top = '0';
+            lobbyScreen.style.left = '0';
+            lobbyScreen.style.width = '100%';
+            lobbyScreen.style.height = '100%';
+            lobbyScreen.style.backgroundColor = '#ffffff';
+        }
+        
+        // Limpiar cualquier overlay o mensaje residual
+        const overlays = document.querySelectorAll('.message-overlay, .spectator-overlay');
+        overlays.forEach(overlay => {
+            if (overlay && overlay.parentNode) {
+                overlay.parentNode.removeChild(overlay);
+            }
+        });
+        
+        // Forzar un reflow del DOM para asegurar que los cambios se aplican
+        document.body.offsetHeight;
     }
     
     // Inicializar Three.js
@@ -897,6 +1098,8 @@ class Game {
     
     // Crear efecto visual de respawn
     createRespawnEffect(position) {
+        if (!this.isRunning || !this.scene) return;
+        
         // Crear efecto de respawn (aura, partículas, etc.)
         const geometry = new THREE.SphereGeometry(1, 16, 16);
         const material = new THREE.MeshBasicMaterial({
@@ -913,6 +1116,15 @@ class Game {
         const startTime = Date.now();
         
         const animateEffect = () => {
+            if (!this.isRunning || !this.scene) {
+                if (effect.parent) {
+                    effect.parent.remove(effect);
+                }
+                material.dispose();
+                geometry.dispose();
+                return;
+            }
+            
             const elapsed = (Date.now() - startTime) / 1000;
             
             // Expandir y desvanecer
@@ -920,9 +1132,24 @@ class Game {
             effect.material.opacity = 0.5 * (1 - elapsed / 1.5);
             
             if (elapsed < 1.5) {
-                requestAnimationFrame(animateEffect);
+                const animationId = requestAnimationFrame(animateEffect);
+                this.activeAnimations = this.activeAnimations || [];
+                this.activeAnimations.push({
+                    cancel: () => {
+                        cancelAnimationFrame(animationId);
+                        if (effect.parent) {
+                            effect.parent.remove(effect);
+                        }
+                        material.dispose();
+                        geometry.dispose();
+                    }
+                });
             } else {
-                this.scene.remove(effect);
+                if (effect.parent) {
+                    effect.parent.remove(effect);
+                }
+                material.dispose();
+                geometry.dispose();
             }
         };
         
@@ -967,7 +1194,8 @@ class Game {
     
     // Crear efecto visual de destrucción de plataforma
     createDestructionEffect(position) {
-        // Crear partículas de destrucción
+        if (!this.isRunning || !this.scene) return;
+        
         const geometry = new THREE.BufferGeometry();
         const vertices = [];
         
@@ -975,7 +1203,6 @@ class Game {
             const x = position.x + (Math.random() - 0.5) * 2;
             const y = position.y + (Math.random() - 0.5) * 2;
             const z = position.z + (Math.random() - 0.5) * 2;
-            
             vertices.push(x, y, z);
         }
         
@@ -990,29 +1217,49 @@ class Game {
         const particles = new THREE.Points(geometry, material);
         this.scene.add(particles);
         
-        // Animar partículas y eliminarlas después
         const startTime = Date.now();
         
         const animateParticles = () => {
+            if (!this.isRunning || !this.scene) {
+                if (particles.parent) {
+                    particles.parent.remove(particles);
+                }
+                material.dispose();
+                geometry.dispose();
+                return;
+            }
+            
             const positions = particles.geometry.attributes.position.array;
             const elapsed = (Date.now() - startTime) / 1000;
             
-            // Mover partículas hacia arriba y afuera
             for (let i = 0; i < positions.length; i += 3) {
-                positions[i] += (Math.random() - 0.5) * 0.05;  // x
-                positions[i + 1] += 0.05;  // y (hacia arriba)
-                positions[i + 2] += (Math.random() - 0.5) * 0.05;  // z
+                positions[i] += (Math.random() - 0.5) * 0.05;
+                positions[i + 1] += 0.05;
+                positions[i + 2] += (Math.random() - 0.5) * 0.05;
             }
             
             particles.geometry.attributes.position.needsUpdate = true;
-            
-            // Reducir opacidad con el tiempo
             particles.material.opacity = 1 - elapsed;
             
             if (elapsed < 2) {
-                requestAnimationFrame(animateParticles);
+                const animationId = requestAnimationFrame(animateParticles);
+                this.activeAnimations = this.activeAnimations || [];
+                this.activeAnimations.push({
+                    cancel: () => {
+                        cancelAnimationFrame(animationId);
+                        if (particles.parent) {
+                            particles.parent.remove(particles);
+                        }
+                        material.dispose();
+                        geometry.dispose();
+                    }
+                });
             } else {
-                this.scene.remove(particles);
+                if (particles.parent) {
+                    particles.parent.remove(particles);
+                }
+                material.dispose();
+                geometry.dispose();
             }
         };
         
@@ -1409,6 +1656,15 @@ class Game {
         if (this.stats) {
             this.stats.update();
         }
+        
+        // Actualizar cooldown de la ráfaga de aire
+        if (this.airBlastCooldown > 0) {
+            this.airBlastCooldown -= delta;
+            if (this.airBlastCooldown <= 0) {
+                this.airBlastCooldown = 0;
+                this.canUseAirBlast = true;
+            }
+        }
     }
 
     // Método para actualizar la animación de la lava
@@ -1517,6 +1773,15 @@ class Game {
         if (isNaN(velocity.y)) velocity.y = 0;
         if (isNaN(velocity.z)) velocity.z = 0;
         
+        // Verificar y registrar velocidad alta (para depurar ráfaga de aire)
+        if (Math.abs(velocity.x) > 5 || Math.abs(velocity.z) > 5 || Math.abs(velocity.y) > 5) {
+            console.log(`Velocidad alta detectada para ${playerId}:`, 
+                JSON.stringify(velocity), 
+                "Position:", 
+                JSON.stringify({x: playerMesh.position.x, y: playerMesh.position.y, z: playerMesh.position.z})
+            );
+        }
+        
         // Obtener dirección de movimiento basada en la cámara
         const moveDirection = new THREE.Vector3();
         
@@ -1615,6 +1880,9 @@ class Game {
                 this.canUseAirBlast = true;
             }
         }
+        
+        // Actualizar posición del nametag
+        this.updateNametagPosition(playerId);
     }
 
     // Comprobar colisiones entre jugadores
@@ -1735,10 +2003,54 @@ class Game {
 
     // Salir de la sala
     leaveRoom() {
+        // Detener el juego primero
+        this.stop();
+        
+        // Notificar al servidor
         this.socket.emit('leaveRoom');
         
-        // Redirigir al menú principal
+        // Ocultar todas las pantallas
+        const screens = ['game-container', 'game-ui', 'lobby-screen', 'spectator-overlay'];
+        screens.forEach(screenId => {
+            const screen = document.getElementById(screenId);
+            if (screen) {
+                screen.style.display = 'none';
+                screen.style.opacity = '0';
+                screen.style.visibility = 'hidden';
+            }
+        });
+        
+        // Mostrar el menú principal
+        const menuScreen = document.getElementById('menu-screen');
+        if (menuScreen) {
+            menuScreen.style.display = 'block';
+            menuScreen.style.opacity = '1';
+            menuScreen.style.visibility = 'visible';
+            menuScreen.style.zIndex = '1000';
+            menuScreen.style.position = 'fixed';
+            menuScreen.style.top = '0';
+            menuScreen.style.left = '0';
+            menuScreen.style.width = '100%';
+            menuScreen.style.height = '100%';
+            menuScreen.style.backgroundColor = '#ffffff';
+        }
+        
+        // Limpiar el hash de la URL
         window.location.hash = '#menu';
+        
+        // Forzar un reflow del DOM para asegurar que los cambios se aplican
+        document.body.offsetHeight;
+        
+        // Restablecer el fondo
+        document.body.style.backgroundColor = '#ffffff';
+        
+        // Limpiar cualquier overlay residual
+        const overlays = document.querySelectorAll('.message-overlay, .spectator-overlay');
+        overlays.forEach(overlay => {
+            if (overlay && overlay.parentNode) {
+                overlay.parentNode.removeChild(overlay);
+            }
+        });
     }
 
     // Actualizar UI del modo espectador
@@ -1933,193 +2245,269 @@ class Game {
         const playerMesh = this.playerMeshes[this.playerId];
         if (!playerMesh) return;
         
-        // Usar la rotación del jugador para la dirección de la ráfaga
-        const direction = new THREE.Vector3(0, 0, 1); // Cambiado de -1 a 1 para invertir la dirección
+        // Obtener posición y dirección
+        const position = playerMesh.position.clone();
+        const direction = new THREE.Vector3(0, 0, 1);
         direction.applyQuaternion(playerMesh.quaternion);
         direction.y = 0; // Mantener la ráfaga horizontal
         direction.normalize();
         
-        // Crear efecto visual de la ráfaga
-        this.createAirBlastEffect(playerMesh.position, direction);
+        // Crear efecto visual localmente
+        this.createAirBlastEffect(position, direction);
         
-        // Detectar jugadores en el área de efecto
-        const blastRange = 10;
-        const blastAngle = Math.PI / 3;
-        const pushForce = 20;
-        
-        Object.keys(this.playerMeshes).forEach(targetId => {
-            if (targetId === this.playerId) return; // No afectar al jugador que la usa
-            
-            const targetMesh = this.playerMeshes[targetId];
-            if (!targetMesh) return;
-            
-            // Vector desde el jugador al objetivo
-            const toTarget = new THREE.Vector3()
-                .copy(targetMesh.position)
-                .sub(playerMesh.position);
-            
-            const distance = toTarget.length();
-            
-            // Comprobar si está en rango
-            if (distance <= blastRange) {
-                // Normalizar el vector para calcular el ángulo
-                toTarget.normalize();
-                const angle = Math.acos(toTarget.dot(direction));
-                
-                // Si está dentro del cono de efecto
-                if (angle <= blastAngle / 2) {
-                    // Calcular fuerza basada en la distancia (más fuerte cerca, más débil lejos)
-                    const forceMagnitude = pushForce * (1 - distance / blastRange);
-                    
-                    // Aplicar el empuje
-                    const pushVector = new THREE.Vector3()
-                        .copy(direction)
-                        .multiplyScalar(forceMagnitude);
-                    
-                    // Añadir componente vertical para crear un efecto de "pop-up"
-                    pushVector.y = forceMagnitude * 0.5;
-                    
-                    // Emitir el evento de empuje al servidor
-                    this.socket.emit('airBlastHit', {
-                        targetId: targetId,
-                        force: {
-                            x: pushVector.x,
-                            y: pushVector.y,
-                            z: pushVector.z
-                        }
-                    });
-                }
+        // Enviar evento al servidor
+        this.socket.emit('useAirBlast', {
+            position: {
+                x: position.x,
+                y: position.y,
+                z: position.z
+            },
+            direction: {
+                x: direction.x,
+                y: direction.y,
+                z: direction.z
             }
         });
         
         // Activar cooldown
         this.canUseAirBlast = false;
         this.airBlastCooldown = this.airBlastCooldownTime;
+        this.lastAirBlastTime = Date.now();
+        
+        // Actualizar UI de cooldown
+        this.updateAirBlastCooldownUI();
         
         // Iniciar temporizador de cooldown
         setTimeout(() => {
             this.canUseAirBlast = true;
+            // Actualizar UI cuando se completa el cooldown
+            const cooldownBar = document.getElementById('cooldown-bar');
+            if (cooldownBar) {
+                cooldownBar.style.width = '0%';
+            }
         }, this.airBlastCooldownTime * 1000);
     }
     
-    // Crear efecto visual de la ráfaga de aire
-    createAirBlastEffect(position, direction) {
-        // Crear geometría para las partículas
-        const particleCount = 150; // Más partículas para mejor efecto
-        const geometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(particleCount * 3);
-        const colors = new Float32Array(particleCount * 3);
-        const sizes = new Float32Array(particleCount);
+    // Aplicar empuje recibido del servidor
+    applyServerPush(pushVector) {
+        if (!this.playerVelocity[this.playerId] || !this.playerMeshes[this.playerId]) return;
         
-        // Material para las partículas cuadradas
-        const material = new THREE.PointsMaterial({
-            size: 0.3,
-            transparent: true,
-            opacity: 0.9,
-            vertexColors: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            sizeAttenuation: true,
-            map: this.createSquareTexture()
-        });
+        // Convertir a números si son strings
+        const force = {
+            x: Number(pushVector.x),
+            y: Number(pushVector.y),
+            z: Number(pushVector.z)
+        };
         
-        // Configurar el cono inicial
-        const coneAngle = Math.PI / 6; // 30 grados para más dispersión
-        const minDistance = 0.2;
-        const maxDistance = 3;
+        // Aplicar la fuerza a la velocidad del jugador
+        // Con un factor de control para hacer el efecto más consistente
+        const velocityFactor = 0.8; // Reducir ligeramente el impacto total
+        this.playerVelocity[this.playerId].x = force.x * velocityFactor;
+        this.playerVelocity[this.playerId].y = force.y * velocityFactor;
+        this.playerVelocity[this.playerId].z = force.z * velocityFactor;
         
-        // Color base de las partículas (azul claro con tono cian)
-        const baseColor = new THREE.Color(0x40e0ff);
+        // No aplicar impulso inmediato a la posición para evitar desincronización
+        // Solo actualizar la velocidad y dejar que la física se encargue
         
-        for (let i = 0; i < particleCount; i++) {
-            // Calcular ángulos aleatorios para el cono con más variación
-            const theta = (Math.random() - 0.5) * coneAngle * 1.2;
-            const phi = (Math.random() - 0.5) * coneAngle * 1.2;
+        // Actualizar el nametag
+        this.updateNametagPosition(this.playerId);
+        
+        console.log("Velocidad aplicada:", this.playerVelocity[this.playerId]);
+    }
+    
+    // Actualizar la UI del cooldown de la ráfaga de aire
+    updateAirBlastCooldownUI() {
+        // Verificar si la UI de cooldown existe
+        let cooldownContainer = document.getElementById('cooldown-container');
+        
+        // Si no existe, crearla
+        if (!cooldownContainer) {
+            cooldownContainer = document.createElement('div');
+            cooldownContainer.id = 'cooldown-container';
+            cooldownContainer.style.position = 'fixed';
+            cooldownContainer.style.bottom = '20px';
+            cooldownContainer.style.left = '50%';
+            cooldownContainer.style.transform = 'translateX(-50%)';
+            cooldownContainer.style.width = '200px';
+            cooldownContainer.style.height = '15px';
+            cooldownContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+            cooldownContainer.style.borderRadius = '10px';
+            cooldownContainer.style.overflow = 'hidden';
+            cooldownContainer.style.zIndex = '1001';
             
-            // Crear vector de dirección con dispersión
-            const particleDir = new THREE.Vector3().copy(direction);
-            particleDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), theta);
-            particleDir.applyAxisAngle(new THREE.Vector3(1, 0, 0), phi);
+            const cooldownBar = document.createElement('div');
+            cooldownBar.id = 'cooldown-bar';
+            cooldownBar.style.height = '100%';
+            cooldownBar.style.width = '100%';
+            cooldownBar.style.backgroundColor = '#40e0ff';
+            cooldownBar.style.transition = 'width 0.1s linear';
             
-            // Posición inicial aleatoria dentro del cono
-            const distance = minDistance + Math.random() * (maxDistance - minDistance);
-            const index = i * 3;
-            positions[index] = position.x + particleDir.x * distance * 0.3;
-            positions[index + 1] = position.y + particleDir.y * distance * 0.3;
-            positions[index + 2] = position.z + particleDir.z * distance * 0.3;
-            
-            // Color con variación de intensidad y tono
-            const intensity = 0.7 + Math.random() * 0.3;
-            const hueShift = (Math.random() - 0.5) * 0.1;
-            const color = new THREE.Color(baseColor.getHex());
-            color.offsetHSL(hueShift, 0, 0);
-            colors[index] = color.r * intensity;
-            colors[index + 1] = color.g * intensity;
-            colors[index + 2] = color.b * intensity;
-            
-            // Tamaños variables para las partículas
-            sizes[i] = 0.2 + Math.random() * 0.4;
+            cooldownContainer.appendChild(cooldownBar);
+            document.body.appendChild(cooldownContainer);
         }
         
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-        geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+        // Mostrar la barra llena
+        const cooldownBar = document.getElementById('cooldown-bar');
+        if (cooldownBar) {
+            cooldownBar.style.width = '100%';
+        }
         
-        const particles = new THREE.Points(geometry, material);
-        this.scene.add(particles);
-        
-        // Animar el efecto
-        const startTime = Date.now();
-        const duration = 1.2; // Duración más larga para efecto más lento
-        const maxSpread = 8; // Mayor dispersión máxima
-        const speed = 0.12; // Velocidad reducida
-        
-        const animateBlast = () => {
-            const elapsed = (Date.now() - startTime) / 1000;
-            const progress = elapsed / duration;
+        // Animar la barra gradualmente
+        const updateBar = () => {
+            if (!this.isRunning) return; // No actualizar si el juego no está corriendo
             
-            if (progress < 1) {
-                const positions = particles.geometry.attributes.position.array;
-                const colors = particles.geometry.attributes.color.array;
-                const sizes = particles.geometry.attributes.size.array;
-                
-                for (let i = 0; i < particleCount; i++) {
-                    const index = i * 3;
-                    
-                    // Calcular dirección expandida con más aleatoriedad
-                    const particleProgress = Math.min(1, progress * (1 + Math.random() * 0.5));
-                    const spread = particleProgress * maxSpread;
-                    
-                    // Mover partículas más lentamente y con más dispersión
-                    positions[index] += direction.x * speed + (Math.random() - 0.5) * spread * 0.15;
-                    positions[index + 1] += direction.y * speed + (Math.random() - 0.5) * spread * 0.15;
-                    positions[index + 2] += direction.z * speed + (Math.random() - 0.5) * spread * 0.15;
-                    
-                    // Desvanecer color y tamaño más gradualmente
-                    const fadeOut = Math.max(0, 1 - (particleProgress * 1.2));
-                    colors[index] *= fadeOut;
-                    colors[index + 1] *= fadeOut;
-                    colors[index + 2] *= fadeOut;
-                    
-                    // Hacer que las partículas crezcan un poco antes de desvanecerse
-                    const sizeMultiplier = 1 + particleProgress * 0.5;
-                    sizes[i] = (0.2 + Math.random() * 0.4) * sizeMultiplier;
-                }
-                
-                particles.geometry.attributes.position.needsUpdate = true;
-                particles.geometry.attributes.color.needsUpdate = true;
-                particles.geometry.attributes.size.needsUpdate = true;
-                particles.material.opacity = Math.max(0, 0.9 * (1 - progress * 1.2));
-                
-                requestAnimationFrame(animateBlast);
-            } else {
-                this.scene.remove(particles);
-                particles.geometry.dispose();
-                particles.material.dispose();
+            const elapsed = (Date.now() - this.lastAirBlastTime) / 1000;
+            const remaining = Math.max(0, this.airBlastCooldownTime - elapsed);
+            const percent = (remaining / this.airBlastCooldownTime) * 100;
+            
+            if (cooldownBar) {
+                cooldownBar.style.width = `${percent}%`;
+            }
+            
+            if (percent > 0 && this.isRunning) {
+                requestAnimationFrame(updateBar);
             }
         };
         
+        updateBar();
+    }
+
+    // Crear efecto visual de la ráfaga de aire
+    createAirBlastEffect(position, direction) {
+        // Crear una textura cuadrada para las partículas
+        const texture = this.createSquareTexture();
+        
+        // Número de partículas
+        const particleCount = 120;
+        
+        // Crear geometría para las partículas
+        const particlesGeometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const sizes = new Float32Array(particleCount);
+        const colors = new Float32Array(particleCount * 3);
+        
+        // Color base - Cyan claro
+        const baseColor = new THREE.Color(0x40e0ff);
+        
+        // Generar posiciones iniciales de las partículas
+        for (let i = 0; i < particleCount; i++) {
+            // Posición inicial (ligeramente dispersa alrededor del punto de origen)
+            const offset = 0.1; // Menor dispersión inicial para un inicio más concentrado
+            positions[i * 3] = position.x + (Math.random() - 0.5) * offset;
+            positions[i * 3 + 1] = position.y + (Math.random() - 0.5) * offset;
+            positions[i * 3 + 2] = position.z + (Math.random() - 0.5) * offset;
+            
+            // Tamaño de partícula
+            sizes[i] = 0.3 * (0.8 + Math.random() * 0.4); // Tamaño más consistente
+            
+            // Color con variación
+            const colorVariation = 0.1;
+            const color = baseColor.clone();
+            color.r += (Math.random() - 0.5) * colorVariation;
+            color.g += (Math.random() - 0.5) * colorVariation;
+            color.b += (Math.random() - 0.5) * colorVariation;
+            
+            colors[i * 3] = color.r;
+            colors[i * 3 + 1] = color.g;
+            colors[i * 3 + 2] = color.b;
+        }
+        
+        // Configurar geometría
+        particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        particlesGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+        particlesGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        
+        // Material de partículas
+        const particlesMaterial = new THREE.PointsMaterial({
+            size: 0.3,
+            map: texture,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            transparent: true,
+            vertexColors: true
+        });
+        
+        // Crear sistema de partículas
+        const particles = new THREE.Points(particlesGeometry, particlesMaterial);
+        this.scene.add(particles);
+        
+        // Datos de animación
+        const animationData = {
+            startTime: Date.now(),
+            duration: 1.0, // Duración más corta para efecto más rápido
+            direction: direction.clone(),
+            speed: 0.13, // Velocidad más lenta para coincidir con el empuje más suave
+            maxDistance: 10, // Mayor distancia máxima
+            maxDispersion: 3, // Menor dispersión para un efecto más enfocado
+            particles: particles
+        };
+        
+        // Función de animación
+        const animateBlast = () => {
+            if (!this.scene) return;
+            
+            const now = Date.now();
+            const elapsed = (now - animationData.startTime) / 1000;
+            const progress = elapsed / animationData.duration;
+            
+            if (progress >= 1) {
+                // Eliminar partículas al terminar
+                this.scene.remove(particles);
+                particlesGeometry.dispose();
+                particlesMaterial.dispose();
+                return;
+            }
+            
+            // Actualizar posiciones
+            const positions = particles.geometry.attributes.position.array;
+            const sizes = particles.geometry.attributes.size.array;
+            const colors = particles.geometry.attributes.color.array;
+            
+            for (let i = 0; i < particleCount; i++) {
+                // Calcular nueva posición
+                const speed = animationData.speed * (1 + Math.random() * 0.2); // Variación de velocidad
+                const distance = speed * elapsed * (1 + i % 3); // Velocidad variable por partícula
+                
+                // Calcular ángulo de dispersión (menor para un cono más estrecho)
+                const dispersionAngle = (Math.random() - 0.5) * (Math.PI / 8);
+                const dispersionFactor = Math.min(1, elapsed * 0.15); // Aumento gradual de dispersión
+                
+                // Crear vector de dirección con dispersión
+                const particleDir = animationData.direction.clone();
+                
+                // Aplicar rotación para dispersión
+                particleDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), dispersionAngle * dispersionFactor);
+                particleDir.applyAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * (Math.PI / 8) * dispersionFactor);
+                
+                // Aplicar movimiento
+                positions[i * 3] = position.x + particleDir.x * distance * (1 + Math.random() * 0.5);
+                positions[i * 3 + 1] = position.y + particleDir.y * distance * (1 + Math.random() * 0.5) + Math.sin(progress * Math.PI) * 0.3; // Arco ligero
+                positions[i * 3 + 2] = position.z + particleDir.z * distance * (1 + Math.random() * 0.5);
+                
+                // Reducir tamaño gradualmente
+                const sizeProgress = Math.min(1, elapsed * 2); // Reducción más rápida
+                sizes[i] *= (1 - sizeProgress * 0.01);
+                
+                // Reducir opacidad (mediante color)
+                const opacity = 1 - progress;
+                colors[i * 3 + 0] *= opacity;
+                colors[i * 3 + 1] *= opacity;
+                colors[i * 3 + 2] *= opacity;
+            }
+            
+            // Actualizar geometría
+            particles.geometry.attributes.position.needsUpdate = true;
+            particles.geometry.attributes.size.needsUpdate = true;
+            particles.geometry.attributes.color.needsUpdate = true;
+            
+            // Continuar animación
+            requestAnimationFrame(animateBlast);
+        };
+        
+        // Iniciar animación
         animateBlast();
+        
+        return particles;
     }
 
     // Crear textura cuadrada para las partículas
@@ -2144,16 +2532,6 @@ class Game {
         texture.magFilter = THREE.NearestFilter;
         texture.minFilter = THREE.NearestFilter;
         return texture;
-    }
-
-    // Aplicar el efecto de empuje de la ráfaga de aire
-    applyAirBlastForce(playerId, force) {
-        if (!this.playerMeshes[playerId] || !this.playerVelocity[playerId]) return;
-        
-        // Aplicar la fuerza como velocidad
-        this.playerVelocity[playerId].x += force.x;
-        this.playerVelocity[playerId].y += force.y;
-        this.playerVelocity[playerId].z += force.z;
     }
 }
 
