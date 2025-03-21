@@ -8,88 +8,19 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Boogaloo&family=Bubblegum+Sans&family=Fredoka:wght@400;700&display=swap" rel="stylesheet">
-    <!-- Socket.IO primero -->
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <!-- Three.js después -->
-    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
     <script type="importmap">
         {
-            "imports": {
-                "three": "https://unpkg.com/three@0.159.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.159.0/examples/jsm/"
-            }
+          "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/"
+          }
         }
     </script>
-    <!-- Script de inicialización -->
-    <script>
-        window.addEventListener('load', function() {
-            // Verificar que Socket.IO está disponible
-            if (typeof io === 'undefined') {
-                console.error('Socket.IO no se ha cargado correctamente');
-                document.getElementById('loading-screen').innerHTML = '<div class="loading-content"><h1>Error de Conexión</h1><p>No se pudo conectar al servidor. Por favor, recarga la página.</p></div>';
-                return;
-            }
-
-            // Configurar Socket.IO
-            const socketOptions = {
-                path: '/socket.io',
-                transports: ['websocket', 'polling'],
-                reconnectionAttempts: 5,
-                reconnectionDelay: 1000
-            };
-
-            // Intentar conectar al servidor
-            const serverUrl = window.location.hostname === 'localhost' 
-                ? 'http://localhost:3000' 
-                : window.location.origin;
-
-            try {
-                window.gameSocket = io(serverUrl, socketOptions);
-
-                window.gameSocket.on('connect', () => {
-                    console.log('Conectado al servidor:', window.gameSocket.id);
-                    // Cargar los scripts del juego solo después de conectar
-                    loadGameScripts();
-                });
-
-                window.gameSocket.on('connect_error', (error) => {
-                    console.error('Error de conexión:', error);
-                    document.getElementById('loading-screen').innerHTML = '<div class="loading-content"><h1>Error de Conexión</h1><p>No se pudo conectar al servidor. Por favor, recarga la página.</p></div>';
-                });
-            } catch (error) {
-                console.error('Error al inicializar Socket.IO:', error);
-                document.getElementById('loading-screen').innerHTML = '<div class="loading-content"><h1>Error de Inicialización</h1><p>Hubo un problema al iniciar el juego. Por favor, recarga la página.</p></div>';
-            }
-        });
-
-        function loadGameScripts() {
-            // Cargar los scripts del juego
-            const scripts = [
-                { src: 'js/game.js', type: 'module' },
-                { src: 'js/menu.js', type: 'module' }
-            ];
-
-            let loaded = 0;
-            scripts.forEach(script => {
-                const scriptElement = document.createElement('script');
-                scriptElement.src = script.src;
-                scriptElement.type = script.type;
-                scriptElement.onload = () => {
-                    loaded++;
-                    if (loaded === scripts.length) {
-                        // Todos los scripts cargados
-                        document.getElementById('loading-screen').style.display = 'none';
-                        document.getElementById('menu-screen').style.display = 'block';
-                    }
-                };
-                scriptElement.onerror = (error) => {
-                    console.error('Error al cargar script:', script.src, error);
-                    document.getElementById('loading-screen').innerHTML = '<div class="loading-content"><h1>Error de Carga</h1><p>No se pudieron cargar los recursos del juego. Por favor, recarga la página.</p></div>';
-                };
-                document.body.appendChild(scriptElement);
-            });
-        }
-    </script>
+    <!-- Cargar Socket.IO desde CDN -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.159.0/three.min.js"></script>
+    <script src="js/game.js" type="module"></script>
+    <script src="js/menu.js" type="module"></script>
 </head>
 <body>
     <div id="loading-screen">
