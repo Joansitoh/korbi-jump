@@ -13,18 +13,11 @@
     "routes": [
         {
             "src": "/socket.io/(.*)",
-            "dest": "server.js"
-        },
-        {
-            "handle": "filesystem"
-        },
-        {
-            "src": "/(.*).(js|css|html|png|jpg|jpeg|gif|ico|json)",
-            "dest": "/public/$1.$2"
+            "dest": "/server.js"
         },
         {
             "src": "/(.*)",
-            "dest": "server.js"
+            "dest": "/public/$1"
         }
     ]
 } 

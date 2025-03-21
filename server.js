@@ -16,8 +16,7 @@ const io = socketIO(server, {
         credentials: true
     },
     // Configuración específica para Vercel
-    path: '/socket.io',
-    transports: ['websocket', 'polling']
+    path: '/socket.io'
 });
 
 // Configuración del servidor
@@ -34,9 +33,9 @@ app.use((req, res, next) => {
 // Servir archivos estáticos
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Ruta específica para socket.io.js
+// Servir el archivo de Socket.IO client desde node_modules
 app.get('/socket.io/socket.io.js', (req, res) => {
-    res.sendFile(require.resolve('socket.io/client-dist/socket.io.js'));
+    res.sendFile(path.join(__dirname, 'node_modules', 'socket.io', 'client-dist', 'socket.io.js'));
 });
 
 // Ruta para la página principal

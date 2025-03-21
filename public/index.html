@@ -16,6 +16,11 @@
           }
         }
     </script>
+    <!-- Cargar Socket.IO desde CDN -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.159.0/three.min.js"></script>
+    <script src="js/game.js" type="module"></script>
+    <script src="js/menu.js" type="module"></script>
 </head>
 <body>
     <div id="loading-screen">
@@ -158,11 +163,5 @@
             <p>WASD: Mover | ESPACIO: Saltar | Rueda del ratón: Zoom | Click + Mover: Rotar cámara</p>
         </div>
     </div>
-
-    <!-- Scripts -->
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="js/menu.js"></script>
-    <script type="module" src="js/game.js"></script>
-    <script type="module" src="js/main.js"></script>
 </body>
 </html> 
