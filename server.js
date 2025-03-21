@@ -671,11 +671,11 @@ function getRoomByPlayerId(playerId) {
 }
 
 // Exportar para Vercel
-module.exports = app;
-
-// Solo iniciar el servidor si no estamos en Vercel
-if (process.env.NODE_ENV !== 'production') {
+if (process.env.NODE_ENV === 'production') {
+    module.exports = server;
+} else {
     server.listen(PORT, () => {
         console.log(`Servidor corriendo en puerto ${PORT}`);
     });
+    module.exports = server;
 } 
