@@ -2269,6 +2269,9 @@ class Game {
             }
         });
         
+        // Reproducir efecto de sonido (silenciosamente si no existe)
+        this.playSound('airblast.mp3', 0.4);
+        
         // Activar cooldown
         this.canUseAirBlast = false;
         this.airBlastCooldown = this.airBlastCooldownTime;
@@ -2280,14 +2283,75 @@ class Game {
         // Iniciar temporizador de cooldown
         setTimeout(() => {
             this.canUseAirBlast = true;
-            // Actualizar UI cuando se completa el cooldown
+            
+            // Mostrar el efecto de listo en la UI
             const cooldownBar = document.getElementById('cooldown-bar');
+            const cooldownText = document.getElementById('cooldown-text');
             if (cooldownBar) {
                 cooldownBar.style.width = '0%';
             }
+            if (cooldownText) {
+                cooldownText.textContent = 'LISTO';
+            }
+            
+            // Mostrar animación de habilidad lista
+            this.showAirBlastReadyAnimation();
         }, this.airBlastCooldownTime * 1000);
     }
     
+    // Mostrar animación cuando la ráfaga de aire está lista
+    showAirBlastReadyAnimation() {
+        const container = document.getElementById('airblast-cooldown-container');
+        if (!container) return;
+        
+        // Añadir animación de destello
+        container.style.animation = 'none';
+        setTimeout(() => {
+            container.style.animation = 'airblastReady 0.6s ease-in-out';
+            
+            // Crear y añadir keyframes para la animación si no existen
+            if (!document.getElementById('airblast-animation-styles')) {
+                const styleSheet = document.createElement('style');
+                styleSheet.id = 'airblast-animation-styles';
+                styleSheet.textContent = `
+                    @keyframes airblastReady {
+                        0% { box-shadow: 0 0 10px rgba(64, 224, 255, 0.5); transform: scale(1); }
+                        50% { box-shadow: 0 0 20px rgba(64, 224, 255, 0.8); transform: scale(1.05); }
+                        100% { box-shadow: 0 0 10px rgba(64, 224, 255, 0.5); transform: scale(1); }
+                    }
+                `;
+                document.head.appendChild(styleSheet);
+            }
+            
+            // Reproducir sonido de listo
+            this.playSound('ability_ready.mp3', 0.5);
+        }, 10);
+    }
+    
+    // Método para reproducir sonidos de forma segura
+    playSound(filename, volume = 0.5) {
+        try {
+            // Verificar si los directorios existen
+            const possiblePaths = [
+                `/sounds/${filename}`,
+                `/assets/sounds/${filename}`,
+                `/audio/${filename}`,
+                `/assets/audio/${filename}`,
+                `/${filename}`
+            ];
+            
+            const audio = new Audio(possiblePaths[0]);
+            audio.volume = volume;
+            
+            // Capturar errores de reproducción silenciosamente
+            audio.play().catch(e => {
+                console.log(`No se pudo reproducir el sonido: ${filename}`, e);
+            });
+        } catch (e) {
+            console.log(`Error al crear objeto de audio: ${filename}`, e);
+        }
+    }
+
     // Aplicar empuje recibido del servidor
     applyServerPush(pushVector) {
         if (!this.playerVelocity[this.playerId] || !this.playerMeshes[this.playerId]) return;
@@ -2318,38 +2382,97 @@ class Game {
     // Actualizar la UI del cooldown de la ráfaga de aire
     updateAirBlastCooldownUI() {
         // Verificar si la UI de cooldown existe
-        let cooldownContainer = document.getElementById('cooldown-container');
+        let cooldownContainer = document.getElementById('airblast-cooldown-container');
         
         // Si no existe, crearla
         if (!cooldownContainer) {
+            // Contenedor principal
             cooldownContainer = document.createElement('div');
-            cooldownContainer.id = 'cooldown-container';
+            cooldownContainer.id = 'airblast-cooldown-container';
             cooldownContainer.style.position = 'fixed';
             cooldownContainer.style.bottom = '20px';
-            cooldownContainer.style.left = '50%';
-            cooldownContainer.style.transform = 'translateX(-50%)';
-            cooldownContainer.style.width = '200px';
-            cooldownContainer.style.height = '15px';
-            cooldownContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-            cooldownContainer.style.borderRadius = '10px';
-            cooldownContainer.style.overflow = 'hidden';
+            cooldownContainer.style.right = '20px';
+            cooldownContainer.style.width = '180px';
+            cooldownContainer.style.height = '40px';
+            cooldownContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.6)';
+            cooldownContainer.style.borderRadius = '20px';
+            cooldownContainer.style.display = 'flex';
+            cooldownContainer.style.alignItems = 'center';
+            cooldownContainer.style.padding = '0 5px';
+            cooldownContainer.style.boxShadow = '0 0 10px rgba(64, 224, 255, 0.5)';
+            cooldownContainer.style.border = '2px solid rgba(64, 224, 255, 0.7)';
             cooldownContainer.style.zIndex = '1001';
             
+            // Crear el icono de ráfaga de aire
+            const iconContainer = document.createElement('div');
+            iconContainer.style.width = '30px';
+            iconContainer.style.height = '30px';
+            iconContainer.style.borderRadius = '50%';
+            iconContainer.style.backgroundColor = '#40e0ff';
+            iconContainer.style.display = 'flex';
+            iconContainer.style.justifyContent = 'center';
+            iconContainer.style.alignItems = 'center';
+            iconContainer.style.marginRight = '10px';
+            iconContainer.style.boxShadow = '0 0 5px #40e0ff';
+            
+            // SVG para el icono de viento/aire
+            iconContainer.innerHTML = `
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 8H15C16.7 8 18 9.3 18 11C18 12.7 16.7 14 15 14H3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M3 16H19C20.7 16 22 14.7 22 13C22 11.3 20.7 10 19 10" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M3 12H13C14.7 12 16 13.3 16 15C16 16.7 14.7 18 13 18H3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            `;
+            
+            // Contenedor para la barra de progreso
+            const progressContainer = document.createElement('div');
+            progressContainer.style.flex = '1';
+            progressContainer.style.height = '15px';
+            progressContainer.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+            progressContainer.style.borderRadius = '10px';
+            progressContainer.style.overflow = 'hidden';
+            progressContainer.style.position = 'relative';
+            
+            // Barra de progreso
             const cooldownBar = document.createElement('div');
             cooldownBar.id = 'cooldown-bar';
             cooldownBar.style.height = '100%';
             cooldownBar.style.width = '100%';
             cooldownBar.style.backgroundColor = '#40e0ff';
+            cooldownBar.style.borderRadius = '10px';
             cooldownBar.style.transition = 'width 0.1s linear';
+            cooldownBar.style.position = 'absolute';
+            cooldownBar.style.left = '0';
+            cooldownBar.style.top = '0';
             
-            cooldownContainer.appendChild(cooldownBar);
+            // Texto de cooldown
+            const cooldownText = document.createElement('div');
+            cooldownText.id = 'cooldown-text';
+            cooldownText.style.position = 'absolute';
+            cooldownText.style.top = '50%';
+            cooldownText.style.left = '50%';
+            cooldownText.style.transform = 'translate(-50%, -50%)';
+            cooldownText.style.color = 'white';
+            cooldownText.style.fontSize = '10px';
+            cooldownText.style.fontWeight = 'bold';
+            cooldownText.style.textShadow = '0 0 3px rgba(0, 0, 0, 0.8)';
+            cooldownText.textContent = 'LISTO';
+            
+            // Añadir todo al DOM
+            progressContainer.appendChild(cooldownBar);
+            progressContainer.appendChild(cooldownText);
+            cooldownContainer.appendChild(iconContainer);
+            cooldownContainer.appendChild(progressContainer);
             document.body.appendChild(cooldownContainer);
         }
         
         // Mostrar la barra llena
         const cooldownBar = document.getElementById('cooldown-bar');
-        if (cooldownBar) {
+        const cooldownText = document.getElementById('cooldown-text');
+        
+        if (cooldownBar && cooldownText) {
             cooldownBar.style.width = '100%';
+            cooldownText.textContent = 'RECARGANDO...';
         }
         
         // Animar la barra gradualmente
@@ -2362,6 +2485,16 @@ class Game {
             
             if (cooldownBar) {
                 cooldownBar.style.width = `${percent}%`;
+                
+                // Actualizar texto con el tiempo restante
+                if (cooldownText) {
+                    if (percent > 0) {
+                        cooldownText.textContent = `${remaining.toFixed(1)}s`;
+                    } else {
+                        cooldownText.textContent = 'LISTO';
+                        this.showAirBlastReadyAnimation();
+                    }
+                }
             }
             
             if (percent > 0 && this.isRunning) {
