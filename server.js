@@ -6,13 +6,43 @@ const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIO(server);
+
+// Configuración de CORS para Socket.IO
+const io = socketIO(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"],
+        allowedHeaders: ["*"],
+        credentials: true
+    },
+    // Configuración específica para Vercel
+    path: '/socket.io',
+    transports: ['websocket', 'polling']
+});
 
 // Configuración del servidor
 const PORT = process.env.PORT || 3000;
 
+// Middleware para CORS
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    next();
+});
+
 // Servir archivos estáticos
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Ruta específica para socket.io.js
+app.get('/socket.io/socket.io.js', (req, res) => {
+    res.sendFile(require.resolve('socket.io/client-dist/socket.io.js'));
+});
+
+// Ruta para la página principal
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 // Almacena las salas activas
 const rooms = {};
@@ -641,7 +671,12 @@ function getRoomByPlayerId(playerId) {
     );
 }
 
-// Iniciar el servidor
-server.listen(PORT, () => {
-  console.log(`Servidor iniciado en el puerto ${PORT}`);
-}); 
+// Exportar para Vercel
+module.exports = app;
+
+// Solo iniciar el servidor si no estamos en Vercel
+if (process.env.NODE_ENV !== 'production') {
+    server.listen(PORT, () => {
+        console.log(`Servidor corriendo en puerto ${PORT}`);
+    });
+} 

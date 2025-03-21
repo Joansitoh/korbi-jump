@@ -2,7 +2,35 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 class Game {
-    constructor(container, socket, playerId, players, platforms, lavaHeight) {
+    constructor(container) {
+        // Configuración de Socket.IO para Vercel
+        const socketOptions = {
+            path: '/socket.io',
+            transports: ['websocket', 'polling'],
+            secure: true,
+            rejectUnauthorized: false,
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000
+        };
+
+        // Determinar la URL del servidor
+        const serverUrl = window.location.hostname === 'localhost' 
+            ? 'http://localhost:3000' 
+            : window.location.origin;
+
+        // Inicializar Socket.IO con las opciones
+        this.socket = io(serverUrl, socketOptions);
+
+        // Manejar eventos de conexión
+        this.socket.on('connect', () => {
+            console.log('Conectado al servidor:', this.socket.id);
+        });
+
+        this.socket.on('connect_error', (error) => {
+            console.error('Error de conexión:', error);
+        });
+
         this.container = container;
         this.socket = socket;
         this.playerId = playerId;

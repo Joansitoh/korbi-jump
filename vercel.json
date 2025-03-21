@@ -2,7 +2,7 @@
     "version": 2,
     "builds": [
         {
-            "src": "package.json",
+            "src": "server.js",
             "use": "@vercel/node"
         },
         {
@@ -16,8 +16,15 @@
             "dest": "server.js"
         },
         {
+            "handle": "filesystem"
+        },
+        {
+            "src": "/(.*).(js|css|html|png|jpg|jpeg|gif|ico|json)",
+            "dest": "/public/$1.$2"
+        },
+        {
             "src": "/(.*)",
-            "dest": "/public/$1"
+            "dest": "server.js"
         }
     ]
 } 
