@@ -2965,6 +2965,41 @@ class Game {
         ];
         return colors[Math.floor(Math.random() * colors.length)];
     }
+
+    // Actualizar UI del modo espectador
+    updateSpectatorUI() {
+        const spectatorOverlay = document.getElementById('spectator-overlay');
+        
+        if (this.isSpectator) {
+            // Crear o actualizar overlay de espectador
+            if (!spectatorOverlay) {
+                const overlay = document.createElement('div');
+                overlay.id = 'spectator-overlay';
+                overlay.className = 'spectator-overlay';
+                
+                const controls = document.createElement('div');
+                controls.className = 'spectator-controls';
+                controls.innerHTML = `
+                    <h2>Modo Espectador</h2>
+                    <p>¡Has perdido todas tus vidas!</p>
+                    <p>Usa Q y E para cambiar entre jugadores</p>
+                    <div class="spectating-info">Observando a: <span id="spectating-name">Nadie</span></div>
+                `;
+                
+                overlay.appendChild(controls);
+                document.body.appendChild(overlay);
+            }
+            
+            // Actualizar nombre del jugador observado
+            const spectatingNameEl = document.getElementById('spectating-name');
+            if (spectatingNameEl && this.spectatingPlayerId && this.players[this.spectatingPlayerId]) {
+                spectatingNameEl.textContent = this.players[this.spectatingPlayerId].name || 'Desconocido';
+            }
+        } else if (spectatorOverlay) {
+            // Eliminar overlay si no somos espectador
+            document.body.removeChild(spectatorOverlay);
+        }
+    }
 }
 
 // Exportar la clase Game para poder importarla en main.js
